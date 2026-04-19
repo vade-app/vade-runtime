@@ -27,7 +27,7 @@ mkdir -p "$REPOS_ROOT"
 
 if [ ! -d "$REPOS_ROOT/vade-core" ]; then
   log "Cloning vade-core..."
-  git clone https://github.com/vade-app/vade-core.git "$REPOS_ROOT/vade-core"
+  git clone --depth 1 https://github.com/vade-app/vade-core.git "$REPOS_ROOT/vade-core"
 fi
 
 install_deps "$REPOS_ROOT/vade-core"
