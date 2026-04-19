@@ -3,26 +3,15 @@
 # Idempotent: safe to run multiple times.
 set -euo pipefail
 
-echo "[bootstrap] VADE devcontainer first-run setup"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
-# Ensure the library directory structure exists. The volume mount
-# creates the root as a mount point; we create subdirs on first run.
-mkdir -p "$HOME/.vade/library/canvases" "$HOME/.vade/library/entities" 2>/dev/null || \
-  echo "[bootstrap] Warning: could not create $HOME/.vade subdirs. Check volume permissions."
+log "VADE devcontainer first-run setup"
 
-# If we're inside a vade-core checkout, install npm deps so the
-# dev loop is ready immediately.
-if [ -f "/workspace/package.json" ]; then
-  echo "[bootstrap] Installing npm dependencies..."
-  cd /workspace
-  npm install --no-audit --no-fund
-fi
+ensure_dirs
 
-# Verify the tools we expect are on PATH.
-echo "[bootstrap] Tool versions:"
-node --version
-npm --version
-claude --version 2>/dev/null || echo "  claude CLI: not logged in (run 'claude login' after first start)"
-tsx --version 2>/dev/null || npx tsx --version
+install_deps /workspace
 
-echo "[bootstrap] Done. Library at $HOME/.vade/library/"
+print_versions
+
+log "Done. Library at $HOME/.vade/library/"
