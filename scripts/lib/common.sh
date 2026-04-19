@@ -32,10 +32,26 @@ install_deps() {
 }
 
 print_versions() {
+  local tsx_version claude_version
+
+  if check_cmd tsx; then
+    tsx_version="$(tsx --version 2>/dev/null | head -1)"
+  else
+    tsx_version="$(npx tsx --version 2>/dev/null | head -1 || true)"
+    [ -n "$tsx_version" ] || tsx_version="not found"
+  fi
+
+  if check_cmd claude; then
+    claude_version="$(claude --version 2>/dev/null || true)"
+    [ -n "$claude_version" ] || claude_version="installed but not logged in (run: claude login)"
+  else
+    claude_version="not available"
+  fi
+
   log "Tool versions:"
   log "  node: $(node --version 2>/dev/null || echo 'not found')"
   log "  npm:  $(npm --version 2>/dev/null || echo 'not found')"
   log "  git:  $(git --version 2>/dev/null || echo 'not found')"
-  log "  tsx:  $(tsx --version 2>/dev/null | head -1 || echo 'not found')"
-  log "  claude: $(claude --version 2>/dev/null || echo 'not available')"
+  log "  tsx:  $tsx_version"
+  log "  claude: $claude_version"
 }
