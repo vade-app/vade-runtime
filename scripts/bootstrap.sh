@@ -12,6 +12,12 @@ ensure_dirs
 
 install_deps /workspace
 
+ensure_agent_hooks "$SCRIPT_DIR"
+
+# Catch-up digest run: subsequent sessions get fresh output via the
+# installed SessionStart hook.
+bash "$SCRIPT_DIR/discussions-digest.sh" || true
+
 print_versions
 
 log "Done. Library at $HOME/.vade/library/"
