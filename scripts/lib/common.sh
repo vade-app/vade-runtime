@@ -43,7 +43,11 @@ print_versions() {
 
   if check_cmd claude; then
     claude_version="$(claude --version 2>/dev/null || true)"
-    [ -n "$claude_version" ] || claude_version="installed but not logged in (run: claude login)"
+    if [ -n "$claude_version" ]; then
+      claude_version="$claude_version (run: claude login if needed)"
+    else
+      claude_version="available (run: claude login)"
+    fi
   else
     claude_version="not available"
   fi
