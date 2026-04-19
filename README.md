@@ -7,20 +7,23 @@ task-agent workspaces) run inside during development.
 
 ## Status
 
-**Stub.** Bootstrap phase — no Dockerfile yet. Scaffolding begins
-when `vade-core` has enough structure to need a pinned environment.
+**Alpha.** Minimal Dockerfile and devcontainer are in place. Node 20
+LTS + Claude Code CLI + tsx pre-installed. Targets the vade-core
+Vite/tldraw/MCP stack.
 
-## Goals
+## What's in the image
 
-- **Reproducible dev env** — one `devcontainer.json` that works on
-  macOS, Linux, and (eventually) Windows.
-- **Pinned toolchain** — Node.js 20 LTS, TypeScript, pnpm or npm
-  (TBD), Rust stable, Python 3.12 for scientific helpers.
-- **Cached layers** for fast iteration.
-- **Claude Code friendly** — the container ships with `claude`
-  CLI pre-installed and configured to read `/workspace/CLAUDE.md`.
+| Tool | Version | Why |
+|------|---------|-----|
+| Node.js | 20.19.1 LTS | Runtime for vade-core app and MCP server |
+| @anthropic-ai/claude-code | 1.0.120 | Agent CLI inside the container |
+| tsx | 4.21.0 | Run the vade-canvas MCP server |
+| git, build-essential, ca-certificates, curl | bookworm | Dev essentials |
 
-## Planned layout
+See [`versions.lock`](./versions.lock) for the full pinned list and
+rationale.
+
+## Layout
 
 ```
 vade-runtime/
@@ -28,29 +31,53 @@ vade-runtime/
 ├── .devcontainer/
 │   └── devcontainer.json     ← VS Code / Codespaces entry point
 ├── scripts/
-│   ├── bootstrap.sh          ← first-run setup
-│   └── healthcheck.sh        ← container smoke test
-└── versions.lock             ← pinned tool versions
+│   ├── bootstrap.sh          ← first-run setup (npm install, dirs)
+│   └── healthcheck.sh        ← smoke test: versions + PATH
+└── versions.lock             ← pinned tool versions + rationale
 ```
 
-## How to use (once built)
+## How to use
+
+### With VS Code (recommended)
+
+Copy (or symlink) the `.devcontainer/` folder into the vade-core
+checkout, then:
 
 ```bash
-# Clone vade-core next to this repo
-git clone git@github.com:vade-app/vade-core.git ~/repos/vade-core
-cd ~/repos/vade-core
-
-# Open in VS Code with devcontainer
+cd ~/GitHub/VADE/repos/vade-core
 code .
 # → "Reopen in Container" when prompted
 ```
 
-Or via Docker directly:
+The container forwards port **5173** (Vite dev server) and **7600**
+(VADE MCP WebSocket bridge). A named volume `vade-library` persists
+`~/.vade/library/` across rebuilds.
+
+### With Docker directly
 
 ```bash
-docker pull ghcr.io/vade-app/vade-runtime:latest
-docker run -it --rm -v "$PWD:/workspace" ghcr.io/vade-app/vade-runtime
+docker build -t vade-runtime .
+docker run -it --rm \
+  -v "$PWD:/workspace" \
+  -p 5173:5173 -p 7600:7600 \
+  -v vade-library:/home/node/.vade \
+  vade-runtime
 ```
+
+### Verify the image
+
+```bash
+docker run --rm vade-runtime bash /workspace/scripts/healthcheck.sh
+```
+
+## Deferred
+
+- **Rust** — planned for Phase 3+ performance modules. Add via
+  `rustup` when the first Rust crate lands in vade-core.
+- **Python 3.12** — planned for scientific helpers (numpy/scipy).
+  Add when a canvas artifact needs it for agent-side computation.
+- **pnpm** — TBD; sticking with npm until there's a concrete reason
+  to switch.
 
 ## Governance
 
