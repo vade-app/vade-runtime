@@ -31,6 +31,17 @@ install_deps() {
   fi
 }
 
+# Install the SessionStart hook that prints the discussions digest on
+# every Claude Code session start. Idempotent. Safe no-op if the
+# installer script is not present.
+ensure_agent_hooks() {
+  local script_dir="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/..}"
+  if [ -f "$script_dir/install-agent-hooks.sh" ]; then
+    bash "$script_dir/install-agent-hooks.sh" || \
+      log "Warning: agent hook install failed; continuing."
+  fi
+}
+
 print_versions() {
   local tsx_version claude_version
 
