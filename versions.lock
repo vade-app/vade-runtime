@@ -1,0 +1,49 @@
+# VADE runtime — pinned tool versions
+#
+# Every tool installed in the Dockerfile must be listed here with
+# its exact version and a short rationale. Unpinned dependencies
+# cause silent dev-env drift across contributors; this file exists
+# to prevent that class of bug.
+#
+# Format: <tool> <version> # <rationale>
+# Last updated: 2026-04-19
+
+# Base image
+node                20.19.1   # Active LTS as of April 2026. vade-core
+                              # tech stack targets Node 20 LTS per
+                              # vade-core/CLAUDE.md.
+debian              bookworm  # Stable, recent glibc, slim variant
+                              # keeps image small (~150 MB base).
+
+# Globally installed via npm
+@anthropic-ai/claude-code 1.0.120  # Claude Code CLI. Pinned to the
+                                   # minor available at container
+                                   # bake time; rev forward when a
+                                   # new feature is needed or a
+                                   # security advisory lands.
+tsx                 4.21.0    # TypeScript execution (esbuild-based)
+                              # for running the vade-canvas MCP
+                              # server. Matches vade-core devDep.
+
+# System packages (tracked loosely; the bookworm repo pin is the
+# ultimate source of truth for these). Listed for observability.
+git                 debian-bookworm   # Whatever bookworm ships.
+build-essential     debian-bookworm   # gcc, make, etc. for native
+                                      # npm modules like `ws`.
+ca-certificates     debian-bookworm   # TLS trust roots for npm.
+curl                debian-bookworm   # Debugging + MCP endpoint
+                                      # reachability checks.
+procps              debian-bookworm   # `ps`, `top` — helpful when
+                                      # dev-servers hang.
+openssh-client      debian-bookworm   # `git push` over SSH for
+                                      # operators who prefer it to
+                                      # HTTPS+PAT.
+
+# Deferred (not in image yet, listed so the absence is explicit):
+# rust       — planned for Phase 3+ performance modules per vade-core
+#              CLAUDE.md. Add via `rustup` when the first Rust crate
+#              lands in vade-core.
+# python3.12 — planned for scientific helpers. Add when a canvas
+#              artifact needs numpy/scipy for agent-side computation.
+# pnpm       — still TBD per vade-runtime/README.md. Stick with npm
+#              until a concrete reason to switch (workspace speed?).

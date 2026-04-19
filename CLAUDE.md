@@ -45,7 +45,13 @@ is the exact class of bug this repository exists to prevent.
 
 ## Current state
 
-Stub repository. No Dockerfile yet. The first concrete task is to
-write a minimal `Dockerfile` based on `node:20-bookworm-slim` with
-the `claude` CLI pre-installed, plus a `devcontainer.json` that
-opens the image inside VS Code.
+Alpha. Minimal Dockerfile in place (based on `node:20.19.1-bookworm-slim`)
+with Claude Code CLI and `tsx` pre-installed. `.devcontainer/devcontainer.json`
+forwards ports 5173 (Vite) and 7600 (MCP WebSocket bridge), and mounts
+a named volume for the `~/.vade/library/` canvas library. `scripts/bootstrap.sh`
+and `scripts/healthcheck.sh` handle first-run setup and smoke testing.
+See `versions.lock` for pinned tools.
+
+Next planned additions (deferred until needed): Rust toolchain via
+`rustup` when the first performance module lands, Python 3.12 when a
+canvas artifact needs scientific helpers.
