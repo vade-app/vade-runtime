@@ -37,7 +37,7 @@ ensure_agent_hooks "$SCRIPT_DIR"
 # In a cloud sandbox the setup script effectively IS the session start,
 # so run the digest inline. The hook also gets installed so any nested
 # `claude` invocations get a fresh digest.
-bash "$SCRIPT_DIR/discussions-digest.sh" || true
+# bash "$SCRIPT_DIR/discussions-digest.sh" || true
 
 print_versions
 
