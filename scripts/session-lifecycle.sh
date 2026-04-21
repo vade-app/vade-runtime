@@ -26,15 +26,24 @@ if [ "${1:-}" = "--end" ]; then
   MODE="end"
 fi
 
+# Claude Code's Write tool resolves ~/ to /home/user in the cloud
+# container while bash $HOME is /root. Plans authored through
+# Claude's tools therefore land at a different path than the hook
+# would see. Search both so the candidate list is complete
+# regardless of which home a writer used.
 PLANS_DIR="$HOME/.claude/plans"
+CLAUDE_PLANS_DIR="/home/user/.claude/plans"
+
 STATE_DIR="$HOME/.vade/agent-state"
 RUN_ID_FILE="$STATE_DIR/current-run-id"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
 list_plans() {
-  if [ -d "$PLANS_DIR" ]; then
-    find "$PLANS_DIR" -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort
-  fi
+  {
+    [ -d "$PLANS_DIR" ]        && find "$PLANS_DIR"        -maxdepth 1 -type f -name '*.md' 2>/dev/null
+    [ "$PLANS_DIR" != "$CLAUDE_PLANS_DIR" ] && [ -d "$CLAUDE_PLANS_DIR" ] \
+                               && find "$CLAUDE_PLANS_DIR" -maxdepth 1 -type f -name '*.md' 2>/dev/null
+  } | sort -u
 }
 
 if [ "$MODE" = "start" ]; then
@@ -56,7 +65,7 @@ if [ "$MODE" = "start" ]; then
 
   plans="$(list_plans || true)"
   if [ -n "$plans" ]; then
-    echo "  • Plan files already present in $PLANS_DIR:"
+    echo "  • Plan files already present:"
     while IFS= read -r p; do
       [ -n "$p" ] && echo "      - $p"
     done <<< "$plans"
@@ -94,7 +103,7 @@ echo "     GitHub MCP (create_or_update_file)."
 plans="$(list_plans || true)"
 if [ -n "$plans" ]; then
   echo ""
-  echo "     Candidate files in $PLANS_DIR:"
+  echo "     Candidate files:"
   while IFS= read -r p; do
     [ -n "$p" ] && echo "       - $p"
   done <<< "$plans"
