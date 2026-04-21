@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Install the vade SessionStart hook into ~/.claude/settings.json.
+# Install the vade hooks into ~/.claude/settings.json.
 #
-# The hook runs scripts/discussions-digest.sh on every Claude Code
-# session start, printing a short digest of new org discussions.
+# Hooks installed (event → command):
+#   SessionStart → scripts/discussions-digest.sh
+#   SessionStart → scripts/session-lifecycle.sh
+#   Stop         → scripts/session-lifecycle.sh --end
 #
-# Idempotent: does not add a duplicate entry if already installed.
+# Idempotent: does not add duplicate entries if already installed.
 # Safe no-op if node is unavailable or settings.json is unparseable.
 set -euo pipefail
 
@@ -22,11 +24,21 @@ SETTINGS_FILE="$SETTINGS_DIR/settings.json"
 mkdir -p "$SETTINGS_DIR"
 
 DIGEST_CMD="bash $SCRIPT_DIR/discussions-digest.sh"
+LIFECYCLE_START_CMD="bash $SCRIPT_DIR/session-lifecycle.sh"
+LIFECYCLE_END_CMD="bash $SCRIPT_DIR/session-lifecycle.sh --end"
+
+# Pairs of "event|command" for the node script to install.
+HOOK_SPEC="$(cat <<EOF
+SessionStart|$DIGEST_CMD
+SessionStart|$LIFECYCLE_START_CMD
+Stop|$LIFECYCLE_END_CMD
+EOF
+)"
 
 node -e '
 const fs = require("fs");
 const path = process.argv[1];
-const cmd = process.argv[2];
+const spec = process.argv[2];
 
 let cfg = {};
 if (fs.existsSync(path)) {
@@ -39,22 +51,29 @@ if (fs.existsSync(path)) {
 }
 
 cfg.hooks = cfg.hooks || {};
-cfg.hooks.SessionStart = cfg.hooks.SessionStart || [];
 
-const already = cfg.hooks.SessionStart.some(entry =>
-  entry && Array.isArray(entry.hooks) &&
-  entry.hooks.some(h => h && h.command === cmd)
-);
-
-if (already) {
-  console.log("[vade-setup] SessionStart hook already installed.");
-  process.exit(0);
-}
-
-cfg.hooks.SessionStart.push({
-  hooks: [{ type: "command", command: cmd }],
+const entries = spec.split("\n").filter(Boolean).map(line => {
+  const [event, ...cmdParts] = line.split("|");
+  return { event, command: cmdParts.join("|") };
 });
 
-fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
-console.log("[vade-setup] Installed SessionStart hook → " + cmd);
-' "$SETTINGS_FILE" "$DIGEST_CMD"
+let dirty = false;
+for (const { event, command } of entries) {
+  cfg.hooks[event] = cfg.hooks[event] || [];
+  const already = cfg.hooks[event].some(entry =>
+    entry && Array.isArray(entry.hooks) &&
+    entry.hooks.some(h => h && h.command === command)
+  );
+  if (already) {
+    console.log("[vade-setup] " + event + " hook already installed → " + command);
+    continue;
+  }
+  cfg.hooks[event].push({ hooks: [{ type: "command", command }] });
+  console.log("[vade-setup] Installed " + event + " hook → " + command);
+  dirty = true;
+}
+
+if (dirty) {
+  fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+}
+' "$SETTINGS_FILE" "$HOOK_SPEC"
