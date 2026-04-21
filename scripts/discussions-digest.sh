@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+TOKEN="${GITHUB_TOKEN:-${GITHUB_MCP_PAT:-}}"
 if [ -z "$TOKEN" ]; then
   log "GITHUB_TOKEN unset; skipping discussions digest."
   exit 0

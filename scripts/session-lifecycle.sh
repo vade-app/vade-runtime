@@ -58,7 +58,7 @@ if [ "$MODE" = "start" ]; then
   echo ""
   echo "On start:"
   echo "  • Run search_memories with filter"
-  echo "    {AND: [{user_id: \"ven\"}, {agent_id: \"claude-code\"}]}"
+  echo "    {AND: [{user_id: \"coo\"}]}"
   echo "    Pull the most recent episodic entries. Check artifact_refs"
   echo "    for any in-flight plan files from prior sessions."
   echo ""
