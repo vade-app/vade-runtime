@@ -188,6 +188,32 @@ _sync_claude_settings() {
   chmod 600 "$dst_file"
 }
 
+# Ensure /home/user/.mcp.json is a symlink to the workspace-scope MCP
+# config (mem0 + agentmail). Claude Code loads project-scope .mcp.json
+# from its cwd, and in the cloud env cwd is /home/user, which has no
+# .mcp.json of its own — so project MCPs stay dark even when env vars
+# are populated. Symlinking to the runtime repo's workspace-mcp.json
+# fixes this without polluting any per-repo .mcp.json (github is
+# omitted intentionally: the cloud harness provides github MCP already).
+# Idempotent: if the symlink already points at the right target, no-op.
+ensure_workspace_mcp_config() {
+  local src="${1:-/home/user/vade-runtime/workspace-mcp.json}"
+  local dst="${2:-/home/user/.mcp.json}"
+  if [ ! -f "$src" ]; then
+    log "workspace-mcp: source $src missing; skipping"
+    return 0
+  fi
+  if [ -L "$dst" ] && [ "$(readlink -f "$dst" 2>/dev/null)" = "$(readlink -f "$src" 2>/dev/null)" ]; then
+    return 0
+  fi
+  if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+    log "workspace-mcp: $dst exists and is not a symlink; leaving it alone"
+    return 0
+  fi
+  ln -snf "$src" "$dst"
+  log "workspace-mcp: linked $dst → $src"
+}
+
 print_versions() {
   local tsx_version claude_version
 

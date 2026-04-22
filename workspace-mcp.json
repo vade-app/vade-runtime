@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "mem0": {
+      "type": "http",
+      "url": "https://mcp.mem0.ai/mcp"
+    },
+    "agentmail": {
+      "command": "npx",
+      "args": ["-y", "agentmail-mcp"],
+      "env": {
+        "AGENTMAIL_API_KEY": "${AGENTMAIL_API_KEY}"
+      }
+    }
+  }
+}
