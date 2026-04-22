@@ -50,19 +50,32 @@ else
 fi
 
 # A3: receipt asserts workspace_mcp_symlinked=true/identity_link_ok=true
-# but the link is currently wrong → drift. Vice versa is also flagged.
+# but the link is currently absent OR points at the wrong target → drift.
+# A symlink pointing at the wrong place is just as bad as no symlink for
+# the receipt's purposes (the receipt's invariant is "the workspace-scope
+# overrides land where downstream consumers expect"), so we resolve and
+# compare end targets rather than just checking existence. C1/C2 also
+# validate the live targets in their own group; A3 specifically gates
+# receipt-vs-reality drift between snapshot build and current resume.
 A3_detail=""
 A3_ok=true
 if [ -f "$A1_receipt" ] && check_cmd node; then
   claim_mcp="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1])); process.stdout.write(String(!!r.workspace_mcp_symlinked))' "$A1_receipt" 2>/dev/null || echo unknown)"
   claim_id="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1])); process.stdout.write(String(!!r.identity_link_ok))' "$A1_receipt" 2>/dev/null || echo unknown)"
-  observed_mcp=false
-  observed_id=false
-  [ -L /home/user/.mcp.json ] && observed_mcp=true
-  [ -L /home/user/CLAUDE.md ] && observed_id=true
-  [ "$claim_mcp" = "$observed_mcp" ] || { A3_ok=false; A3_detail="mcp_link drift: receipt=$claim_mcp observed=$observed_mcp; "; }
-  [ "$claim_id" = "$observed_id" ] || { A3_ok=false; A3_detail="${A3_detail}identity_link drift: receipt=$claim_id observed=$observed_id"; }
-  [ "$A3_ok" = true ] && A3_detail="receipt matches observed symlinks"
+  expected_mcp_target="$(readlink -f /home/user/vade-runtime/.mcp.json 2>/dev/null || true)"
+  expected_id_target="$(readlink -f /home/user/vade-coo-memory/CLAUDE.md 2>/dev/null || true)"
+  observed_mcp=false; observed_id=false
+  if [ -L /home/user/.mcp.json ] && [ -n "$expected_mcp_target" ] \
+     && [ "$(readlink -f /home/user/.mcp.json 2>/dev/null)" = "$expected_mcp_target" ]; then
+    observed_mcp=true
+  fi
+  if [ -L /home/user/CLAUDE.md ] && [ -n "$expected_id_target" ] \
+     && [ "$(readlink -f /home/user/CLAUDE.md 2>/dev/null)" = "$expected_id_target" ]; then
+    observed_id=true
+  fi
+  [ "$claim_mcp" = "$observed_mcp" ] || { A3_ok=false; A3_detail="mcp_link drift: receipt=$claim_mcp observed-correct-target=$observed_mcp; "; }
+  [ "$claim_id" = "$observed_id" ] || { A3_ok=false; A3_detail="${A3_detail}identity_link drift: receipt=$claim_id observed-correct-target=$observed_id"; }
+  [ "$A3_ok" = true ] && A3_detail="receipt matches observed (resolved) symlink targets"
 else
   A3_ok=skip
   A3_detail="receipt or node unavailable"
