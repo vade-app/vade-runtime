@@ -275,8 +275,12 @@ ensure_op_cli() {
   local tmp
   tmp="$(mktemp -d)"
   log "Downloading op CLI v${version} (${arch})"
-  if ! curl -sfL "$url" -o "$tmp/op.zip"; then
-    log "op CLI download failed: $url"
+  # cache.agilebits.com occasionally returns 5xx; retry absorbs the transient
+  # window. Without this, a single 503 kills the whole bootstrap chain and
+  # the session comes up with no COO identity — root cause of the
+  # run-2026-04-22T062313 degradation.
+  if ! retry 3 curl -sfL "$url" -o "$tmp/op.zip"; then
+    log "op CLI download failed after retries: $url"
     rm -rf "$tmp"
     return 1
   fi
