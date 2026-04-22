@@ -49,7 +49,7 @@ fi
 
 WORKSPACE_MCP_SYMLINKED=false
 [ -L /home/user/.mcp.json ] && \
-  [ "$(readlink -f /home/user/.mcp.json 2>/dev/null)" = "$(readlink -f /home/user/vade-runtime/workspace-mcp.json 2>/dev/null)" ] && \
+  [ "$(readlink -f /home/user/.mcp.json 2>/dev/null)" = "$(readlink -f /home/user/vade-runtime/.mcp.json 2>/dev/null)" ] && \
   WORKSPACE_MCP_SYMLINKED=true
 
 IDENTITY_LINK_OK=false

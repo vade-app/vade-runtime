@@ -23,7 +23,7 @@ BOOTSTRAP_LOG="${HOME}/.vade/coo-bootstrap.log"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 WORKSPACE_IDENTITY_LINK="/home/user/CLAUDE.md"
 WORKSPACE_MCP_LINK="/home/user/.mcp.json"
-WORKSPACE_MCP_SRC="/home/user/vade-runtime/workspace-mcp.json"
+WORKSPACE_MCP_SRC="/home/user/vade-runtime/.mcp.json"
 SETUP_RECEIPT="/home/user/.vade-cloud-state/setup-receipt.json"
 
 if [ ! -f "$CLAUDE_MD" ]; then
