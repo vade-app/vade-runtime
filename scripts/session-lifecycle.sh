@@ -27,7 +27,7 @@ if [ "${1:-}" = "--end" ]; then
 fi
 
 boot_log_record "session-lifecycle-$MODE" start
-trap 'boot_log_record "session-lifecycle-$MODE" end ok' EXIT
+trap '_rc=$?; boot_log_record "session-lifecycle-'"$MODE"'" end $([ $_rc -eq 0 ] && echo ok || echo fail) rc=$_rc' EXIT
 
 # Claude Code's Write tool resolves ~/ to /home/user in the cloud
 # container while bash $HOME is /root. Plans authored through

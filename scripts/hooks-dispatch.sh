@@ -42,12 +42,25 @@ if [ -z "$HOOK_NAME" ]; then
 fi
 
 BOOT_LOG="${HOME}/.vade/boot.log"
+# Inline JSON-string escape (handles \, ", and the four control chars
+# bash callers might pass). Duplicated from common.sh::_json_escape
+# because the dispatch shim deliberately does not source common.sh —
+# this script is the bootstrap entry point and must not depend on
+# anything that could itself be missing or stale.
+_je() {
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"; s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"; s="${s//$'\b'/\\b}"
+  printf '%s' "$s"
+}
+
 _log() {
   local ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
   mkdir -p "$(dirname "$BOOT_LOG")" 2>/dev/null || return 0
   printf '{"ts":"%s","script":"hooks-dispatch","hook":"%s","rule":"%s","runtime":"%s","ok":%s,"detail":"%s"}\n' \
-    "$ts" "$HOOK_NAME" "$1" "${2:-}" "$3" "${4:-}" \
+    "$ts" "$(_je "$HOOK_NAME")" "$(_je "$1")" "$(_je "${2:-}")" "$3" "$(_je "${4:-}")" \
     >> "$BOOT_LOG" 2>/dev/null || return 0
 }
 

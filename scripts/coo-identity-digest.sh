@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 boot_log_record coo-identity-digest start
-trap 'boot_log_record coo-identity-digest end ok' EXIT
+trap '_rc=$?; boot_log_record coo-identity-digest end $([ $_rc -eq 0 ] && echo ok || echo fail) rc=$_rc' EXIT
 
 if [ -n "${COO_MEMORY_DIR:-}" ]; then
   MEM_REPO="$COO_MEMORY_DIR"

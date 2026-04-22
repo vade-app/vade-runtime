@@ -15,13 +15,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 boot_log_record discussions-digest start
-trap 'boot_log_record discussions-digest end ok' EXIT
+trap '_rc=$?; boot_log_record discussions-digest end $([ $_rc -eq 0 ] && echo ok || echo fail) rc=$_rc' EXIT
 
 TOKEN="${GITHUB_TOKEN:-${GITHUB_MCP_PAT:-}}"
 if [ -z "$TOKEN" ]; then
   log "GITHUB_TOKEN unset; skipping discussions digest."
-  boot_log_record discussions-digest end skip "reason=no-token"
   trap - EXIT
+  boot_log_record discussions-digest end skip "reason=no-token"
   exit 0
 fi
 

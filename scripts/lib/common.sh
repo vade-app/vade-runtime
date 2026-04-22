@@ -74,14 +74,35 @@ build_log_record() {
 #   boot_log_record session-start-sync sync_claude_config ok
 #   boot_log_record session-start-sync end ok duration_ms=9
 VADE_BOOT_LOG="${HOME}/.vade/boot.log"
+
+# Minimal JSON-string escape: backslash, double-quote, and the four
+# control chars that bash callers might plausibly pass (newline, CR,
+# tab, backspace). Keeps each boot.log line a valid JSON object even
+# when callers pass unescaped detail strings (e.g. shell command output,
+# error messages with quotes).
+_json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\b'/\\b}"
+  printf '%s' "$s"
+}
+
 boot_log_record() {
   local script="$1" phase="$2"; shift 2
   local status="${1:-}"
   [ "$#" -gt 0 ] && shift
-  local extras=""
+  local extras="" k v
   for kv in "$@"; do
     case "$kv" in
-      *=*) extras="$extras,\"${kv%%=*}\":\"${kv#*=}\"" ;;
+      *=*)
+        k="$(_json_escape "${kv%%=*}")"
+        v="$(_json_escape "${kv#*=}")"
+        extras="$extras,\"$k\":\"$v\""
+        ;;
     esac
   done
   local ts ok_field=""
@@ -91,11 +112,13 @@ boot_log_record() {
     fail|FAIL) ok_field=',"ok":false' ;;
     skip|SKIP) ok_field=',"ok":true,"skipped":true' ;;
     "")      ok_field='' ;;
-    *)       ok_field=",\"status\":\"$status\"" ;;
+    *)       ok_field=",\"status\":\"$(_json_escape "$status")\"" ;;
   esac
   mkdir -p "$(dirname "$VADE_BOOT_LOG")" 2>/dev/null || return 0
   printf '{"ts":"%s","session":"%s","script":"%s","phase":"%s"%s%s}\n' \
-    "$ts" "${CLAUDE_CODE_SESSION_ID:-unknown}" "$script" "$phase" "$ok_field" "$extras" \
+    "$ts" "$(_json_escape "${CLAUDE_CODE_SESSION_ID:-unknown}")" \
+    "$(_json_escape "$script")" "$(_json_escape "$phase")" \
+    "$ok_field" "$extras" \
     >> "$VADE_BOOT_LOG" 2>/dev/null || return 0
   # Bounded retention: 1000 lines ~ 100 KB, a few hundred sessions worth.
   if [ "$(wc -l < "$VADE_BOOT_LOG" 2>/dev/null || echo 0)" -gt 1000 ]; then
