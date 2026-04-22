@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/coo-bootstrap.sh" },
+          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/discussions-digest.sh" }
+        ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/session-lifecycle.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/session-lifecycle.sh --end" }
+        ]
+      }
+    ]
+  },
+  "env": {}
+}
