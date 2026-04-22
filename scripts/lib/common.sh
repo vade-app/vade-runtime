@@ -277,6 +277,15 @@ fetch_coo_secrets() {
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
 # Code reads this at process startup, so ${GITHUB_MCP_PAT} etc. in
 # .mcp.json substitute correctly. Idempotent.
+#
+# Also surfaces cloud-sandbox tool paths that Claude Code doesn't pick
+# up by default but that scripts/agents regularly need:
+#   - NODE_PATH points to the sandbox's global node_modules so
+#     `import 'playwright'` etc. resolves from any cwd.
+#   - PLAYWRIGHT_BROWSERS_PATH points to the pre-installed browser
+#     bundle so Playwright finds chromium without a download.
+# Both are only exported when the corresponding filesystem path
+# exists, so this is a no-op outside the Claude cloud image.
 _write_claude_settings_env() {
   local pat="$1" agentmail="$2"
   if ! check_cmd node; then
@@ -288,7 +297,13 @@ _write_claude_settings_env() {
   mkdir -p "$settings_dir"
   [ -f "$settings_file" ] || echo '{}' > "$settings_file"
 
-  GITHUB_MCP_PAT="$pat" AGENTMAIL_API_KEY="$agentmail" node -e '
+  local node_path=""
+  [ -d "/opt/node22/lib/node_modules" ] && node_path="/opt/node22/lib/node_modules"
+  local pw_browsers=""
+  [ -d "/opt/pw-browsers" ] && pw_browsers="/opt/pw-browsers"
+
+  GITHUB_MCP_PAT="$pat" AGENTMAIL_API_KEY="$agentmail" \
+  NODE_PATH="$node_path" PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" node -e '
     const fs = require("fs");
     const path = process.argv[1];
     let cfg = {};
@@ -304,6 +319,12 @@ _write_claude_settings_env() {
     }
     if (process.env.AGENTMAIL_API_KEY) {
       merged.AGENTMAIL_API_KEY = process.env.AGENTMAIL_API_KEY;
+    }
+    if (process.env.NODE_PATH) {
+      merged.NODE_PATH = process.env.NODE_PATH;
+    }
+    if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
+      merged.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH;
     }
     cfg.env = merged;
     fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
