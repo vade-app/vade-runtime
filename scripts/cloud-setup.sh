@@ -24,8 +24,28 @@ sync_claude_config /home/user/vade-runtime/.claude
 ensure_workspace_mcp_config
 ensure_workspace_identity_link
 
+# Validate the synced settings.json actually parses as JSON and has a
+# populated SessionStart:startup hook chain. File-exists alone would
+# pass on a truncated or corrupt file. Node is guaranteed present on
+# the cloud image; fall back to file-exists only if node is missing.
 SETTINGS_SYNC_OK=false
-[ -f "$HOME/.claude/settings.json" ] && SETTINGS_SYNC_OK=true
+if [ -f "$HOME/.claude/settings.json" ]; then
+  if check_cmd node; then
+    if node -e '
+      const fs = require("fs");
+      const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const chains = (cfg.hooks && cfg.hooks.SessionStart) || [];
+      for (const c of chains) {
+        if (c.matcher === "startup" && Array.isArray(c.hooks) && c.hooks.length > 0) process.exit(0);
+      }
+      process.exit(1);
+    ' "$HOME/.claude/settings.json" 2>/dev/null; then
+      SETTINGS_SYNC_OK=true
+    fi
+  else
+    SETTINGS_SYNC_OK=true
+  fi
+fi
 
 WORKSPACE_MCP_SYMLINKED=false
 [ -L /home/user/.mcp.json ] && \

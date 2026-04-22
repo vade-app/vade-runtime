@@ -253,7 +253,7 @@ if [ -f "$SETUP_RECEIPT" ]; then
         const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
         for (const k of Object.keys(r)) {
           const v = r[k];
-          console.log("  " + k.padEnd(24) + " " + v);
+          console.log("  " + (k + ":").padEnd(25) + " " + v);
         }
       } catch (e) { console.log("  (unreadable: " + e.message + ")"); }
     ' "$SETUP_RECEIPT" 2>/dev/null || cat "$SETUP_RECEIPT"

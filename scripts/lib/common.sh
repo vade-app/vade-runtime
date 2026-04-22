@@ -48,8 +48,14 @@ build_log_record() {
   local message="$*"
   local ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || return 0
-  printf '%s %s %s\n' "$ts" "$status" "$message" >> "$VADE_BUILD_LOG" 2>/dev/null || return 0
+  if ! mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null; then
+    log "Warning: could not create $VADE_CLOUD_STATE_DIR; build log entry dropped"
+    return 0
+  fi
+  if ! printf '%s %s %s\n' "$ts" "$status" "$message" >> "$VADE_BUILD_LOG" 2>/dev/null; then
+    log "Warning: could not append to $VADE_BUILD_LOG; entry dropped"
+    return 0
+  fi
   if [ "$(wc -l < "$VADE_BUILD_LOG" 2>/dev/null || echo 0)" -gt 500 ]; then
     tail -n 500 "$VADE_BUILD_LOG" > "${VADE_BUILD_LOG}.tmp" 2>/dev/null \
       && mv -f "${VADE_BUILD_LOG}.tmp" "$VADE_BUILD_LOG" 2>/dev/null
@@ -70,10 +76,15 @@ build_log_record() {
 #     coo_bootstrap_ran=false \
 #     git_sha=abc123
 build_receipt_write() {
-  mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || return 0
+  if ! mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null; then
+    log "Warning: could not create $VADE_CLOUD_STATE_DIR; setup-receipt skipped"
+    return 0
+  fi
   if ! check_cmd node; then
     log "Warning: node missing; writing receipt as plain key=value list"
-    printf '%s\n' "$@" > "$VADE_SETUP_RECEIPT" 2>/dev/null || return 0
+    if ! printf '%s\n' "$@" > "$VADE_SETUP_RECEIPT" 2>/dev/null; then
+      log "Warning: could not write $VADE_SETUP_RECEIPT; receipt skipped"
+    fi
     return 0
   fi
   node -e '
