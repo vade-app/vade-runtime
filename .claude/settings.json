@@ -4,6 +4,7 @@
       {
         "matcher": "startup",
         "hooks": [
+          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/session-start-sync.sh" },
           { "type": "command", "command": "bash /home/user/vade-runtime/scripts/ensure-workspace-mcp.sh" },
           { "type": "command", "command": "bash /home/user/vade-runtime/scripts/coo-bootstrap.sh" },
           { "type": "command", "command": "bash /home/user/vade-runtime/scripts/coo-identity-digest.sh" },
