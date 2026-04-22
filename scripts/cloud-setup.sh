@@ -39,10 +39,17 @@ print_versions
 # Anthropic cloud envs may scope custom env vars to the session process
 # only; the SessionStart hook in .claude/settings.json picks up the
 # slack in that case.
+#
+# Probe: record token visibility and settings.json state so the next
+# session's identity-digest can tell us whether setup-script time is
+# a viable bootstrap site (structurally superior to the hook because
+# MCP servers pick up env at Claude Code startup, not post-hook).
 if [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+  bootstrap_log_record PROBE "cloud-setup: OP_SERVICE_ACCOUNT_TOKEN visible at setup time (len=${#OP_SERVICE_ACCOUNT_TOKEN})"
   bash /home/user/vade-runtime/scripts/coo-bootstrap.sh || \
     log "Warning: coo-bootstrap failed; continuing without COO identity."
 else
+  bootstrap_log_record PROBE "cloud-setup: OP_SERVICE_ACCOUNT_TOKEN unset at setup time; hook fallback required"
   log "OP_SERVICE_ACCOUNT_TOKEN not visible at setup time; SessionStart hook will run coo-bootstrap."
 fi
 
