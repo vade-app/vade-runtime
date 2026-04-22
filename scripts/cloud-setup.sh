@@ -41,4 +41,13 @@ ensure_agent_hooks "$SCRIPT_DIR"
 
 print_versions
 
+# COO identity bootstrap runs only when OP_SERVICE_ACCOUNT_TOKEN is set
+# in the cloud environment config. Non-fatal on failure — the base VADE
+# env should still come up even if 1Password is unreachable.
+# See vade-coo-memory/coo/cloud-env-bootstrap.md for the contract.
+if [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+  bash "$SCRIPT_DIR/coo-bootstrap.sh" || \
+    log "Warning: coo-bootstrap failed; continuing without COO identity."
+fi
+
 log "Done. vade-core at $REPOS_ROOT/vade-core, library at $HOME/.vade/library/"

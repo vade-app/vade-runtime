@@ -9,7 +9,9 @@ ARG USERNAME=node
 
 # System packages: git for repo work, ca-certificates for npm/TLS,
 # build tools for any native npm deps, curl for debugging, procps for
-# tools like `ps` used by dev servers.
+# tools like `ps` used by dev servers, openssh-client for git-over-ssh
+# and ssh-keygen fingerprint validation, unzip for the 1Password CLI
+# install path used by the COO identity bootstrap.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
       ca-certificates \
@@ -17,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
       procps \
       openssh-client \
+      unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI (global install). Pinned in versions.lock.
