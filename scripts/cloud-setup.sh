@@ -20,6 +20,7 @@ log "Baseline: node=$(node --version 2>/dev/null || echo 'missing') npm=$(npm --
 
 ensure_dirs
 sync_claude_config /home/user/vade-runtime/.claude
+ensure_workspace_mcp_config
 
 # Workspace deps (npm install vade-core, install tsx) are opt-in:
 # nothing in the SessionStart hook pipeline imports from node_modules,
