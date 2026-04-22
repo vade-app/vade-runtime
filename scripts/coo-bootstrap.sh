@@ -45,15 +45,44 @@ fi
 # block) is durable across resumes. Skip the whole pipeline if it
 # already ran in this container. Escape hatch:
 # VADE_FORCE_COO_BOOTSTRAP=1.
+#
+# Also verify the settings.json env block actually contains the keys
+# a successful bootstrap would have written. A bare marker is not
+# enough: if an earlier bootstrap ran under pre-#18 code it left the
+# marker without populating GITHUB_MCP_PAT into ~/.claude/settings.json,
+# and the session resume came up with github MCP unauth. If any expected
+# key is absent, treat the marker as stale and re-run. run-2026-04-22T073717
+# hit exactly this: marker present, settings.json env had only
+# AGENTMAIL_API_KEY, GITHUB_MCP_PAT was unset, vade-coo identity dark.
 COO_ENV_FILE="${HOME}/.vade/coo-env"
 COO_BOOT_MARKER="${HOME}/.vade/.coo-bootstrap-done"
+_settings_env_complete() {
+  local settings="${HOME}/.claude/settings.json"
+  [ -f "$settings" ] || return 1
+  check_cmd node || return 0  # node missing: fall back to marker-only trust
+  node -e '
+    const fs = require("fs");
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) || {}; }
+    catch { process.exit(1); }
+    const env = cfg.env || {};
+    const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY"];
+    for (const k of required) { if (!env[k]) process.exit(1); }
+    process.exit(0);
+  ' "$settings" 2>/dev/null
+}
 if [ "${VADE_FORCE_COO_BOOTSTRAP:-0}" != "1" ] \
-   && [ -f "$COO_ENV_FILE" ] && [ -f "$COO_BOOT_MARKER" ]; then
+   && [ -f "$COO_ENV_FILE" ] && [ -f "$COO_BOOT_MARKER" ] \
+   && _settings_env_complete; then
   log "coo-bootstrap: already complete this container; skipping."
   COO_BOOTSTRAP_STEP="skip-marker-present"
   bootstrap_log_record SKIP "marker present at $COO_BOOT_MARKER"
   trap - EXIT
   exit 0
+fi
+if [ -f "$COO_BOOT_MARKER" ] && [ "${VADE_FORCE_COO_BOOTSTRAP:-0}" != "1" ]; then
+  log "coo-bootstrap: marker present but settings.json env incomplete; re-running"
+  bootstrap_log_record START "marker stale (settings.json env missing keys); forcing re-run"
 fi
 
 log "coo-bootstrap: starting"
