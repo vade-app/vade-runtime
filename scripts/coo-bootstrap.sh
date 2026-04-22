@@ -16,6 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
+boot_log_record coo-bootstrap start
+
 # Record every exit path in ~/.vade/coo-bootstrap.log so silent failures
 # still leave a trail. The identity-digest hook surfaces the tail of
 # this file on each session start.
@@ -24,8 +26,10 @@ _on_exit() {
   local rc=$?
   if [ "$rc" -eq 0 ]; then
     bootstrap_log_record OK "step=${COO_BOOTSTRAP_STEP} rc=0"
+    boot_log_record coo-bootstrap end ok "step=${COO_BOOTSTRAP_STEP}"
   else
     bootstrap_log_record FAIL "step=${COO_BOOTSTRAP_STEP} rc=${rc}"
+    boot_log_record coo-bootstrap end fail "step=${COO_BOOTSTRAP_STEP}" "rc=${rc}"
   fi
   return $rc
 }

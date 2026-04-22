@@ -16,6 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
+boot_log_record coo-identity-digest start
+trap 'boot_log_record coo-identity-digest end ok' EXIT
+
 if [ -n "${COO_MEMORY_DIR:-}" ]; then
   MEM_REPO="$COO_MEMORY_DIR"
 elif [ "$HOME" != "/home/user" ] && [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then

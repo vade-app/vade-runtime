@@ -27,6 +27,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-sync_claude_config /home/user/vade-runtime/.claude
+boot_log_record session-start-sync start
+sync_claude_config "$SCRIPT_DIR/../.claude"
 ensure_workspace_mcp_config
 ensure_workspace_identity_link
+# Emit integrity-check.json so its snapshot is on disk before the
+# digest hook runs (which may surface a one-line summary). Non-fatal.
+bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
+boot_log_record session-start-sync end ok
