@@ -47,6 +47,21 @@ install_deps() {
 # settings.json is copied so coo-bootstrap can mutate the env block
 # without dirtying the git working tree. Plans/, projects/, todos/,
 # statsig/ and other Claude Code-managed dirs are left alone.
+#
+# Subdir strategy: Claude Code itself ships some of these dirs
+# pre-populated (e.g. ~/.claude/skills/session-start-hook/). Replacing
+# a real directory with a symlink via `ln -snf` silently nests
+# instead, so when the destination already exists as a real dir we
+# merge per-entry: each source child is symlinked in alongside the
+# built-ins. Name collisions with a built-in are skipped with a
+# warning rather than clobbered.
+#
+# settings.json: the source tree's copy is the source of truth for
+# hooks and other top-level keys, but the destination's `.env` is
+# populated at runtime by coo-bootstrap and must survive a re-sync
+# (coo-bootstrap's idempotency marker short-circuits re-merging on
+# subsequent runs). We preserve dest env via a node-based merge when
+# both files exist; otherwise we fall back to a plain copy.
 sync_claude_config() {
   local src="${1:-/home/user/vade-runtime/.claude}"
   local dst="${2:-$HOME/.claude}"
@@ -56,13 +71,59 @@ sync_claude_config() {
   fi
   mkdir -p "$dst"
   for sub in skills agents commands hooks; do
-    [ -d "$src/$sub" ] && ln -snf "$src/$sub" "$dst/$sub"
+    [ -d "$src/$sub" ] || continue
+    _sync_claude_subdir "$src/$sub" "$dst/$sub"
   done
   if [ -f "$src/settings.json" ]; then
-    cp -f "$src/settings.json" "$dst/settings.json"
-    chmod 600 "$dst/settings.json"
+    _sync_claude_settings "$src/settings.json" "$dst/settings.json"
   fi
   log "Synced $src → $dst (subdirs symlinked, settings.json copied)"
+}
+
+_sync_claude_subdir() {
+  local src_sub="$1" dst_sub="$2"
+  if [ -L "$dst_sub" ] || [ ! -e "$dst_sub" ]; then
+    ln -snf "$src_sub" "$dst_sub"
+    return 0
+  fi
+  # Destination exists as a real directory (e.g. Claude Code built-in
+  # skills). Merge per-entry so both coexist.
+  local entry name target
+  for entry in "$src_sub"/*; do
+    [ -e "$entry" ] || continue
+    name="$(basename "$entry")"
+    target="$dst_sub/$name"
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+      log "  warn: $target exists and is not a symlink; skipping to avoid clobbering built-in"
+      continue
+    fi
+    ln -snf "$entry" "$target"
+  done
+}
+
+_sync_claude_settings() {
+  local src_file="$1" dst_file="$2"
+  if [ -f "$dst_file" ] && check_cmd node; then
+    if node -e '
+      const fs = require("fs");
+      const [srcPath, dstPath] = process.argv.slice(1);
+      const src = JSON.parse(fs.readFileSync(srcPath, "utf8"));
+      let dstEnv = {};
+      try {
+        const dst = JSON.parse(fs.readFileSync(dstPath, "utf8")) || {};
+        dstEnv = dst.env || {};
+      } catch {}
+      const merged = Object.assign({}, src);
+      merged.env = Object.assign({}, src.env || {}, dstEnv);
+      fs.writeFileSync(dstPath, JSON.stringify(merged, null, 2) + "\n");
+    ' "$src_file" "$dst_file" 2>/dev/null; then
+      chmod 600 "$dst_file"
+      return 0
+    fi
+    log "  warn: settings.json merge via node failed; falling back to plain copy"
+  fi
+  cp -f "$src_file" "$dst_file"
+  chmod 600 "$dst_file"
 }
 
 print_versions() {
