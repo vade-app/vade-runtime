@@ -1,43 +1,34 @@
 #!/usr/bin/env bash
 # Claude Code web cloud environment setup.
-# Runs once per session, before Claude Code launches.
+# Runs once at snapshot build (cached for ~7 days). Subsequent
+# session resumes restore the cached snapshot — this script does
+# not re-execute on resume.
 #
 # Entry point: paste this into the cloud env "Setup script" field:
 #   #!/bin/bash
-#   git clone --depth 1 https://github.com/vade-app/vade-runtime /tmp/vade-runtime
-#   bash /tmp/vade-runtime/scripts/cloud-setup.sh
+#   set -e
+#   bash /home/user/vade-runtime/scripts/cloud-setup.sh
 #
-# Or run directly if vade-runtime is already cloned.
-#
-# Tracks main — acceptable for personal prototype phase.
+# The harness clones vade-core, vade-runtime, and vade-coo-memory into
+# /home/user/ before this runs, so we just point at /home/user/vade-runtime.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+source /home/user/vade-runtime/scripts/lib/common.sh
 
 log "Cloud environment setup starting"
-
 log "Baseline: node=$(node --version 2>/dev/null || echo 'missing') npm=$(npm --version 2>/dev/null || echo 'missing')"
 
 ensure_dirs
-ensure_tsx
+sync_claude_config /home/user/vade-runtime/.claude
 
-REPOS_ROOT="${VADE_REPOS_ROOT:-$HOME/repos}"
-mkdir -p "$REPOS_ROOT"
-
-if [ ! -d "$REPOS_ROOT/vade-core" ]; then
-  log "Cloning vade-core..."
-  git clone --depth 1 https://github.com/vade-app/vade-core.git "$REPOS_ROOT/vade-core"
+# Workspace deps (npm install vade-core, install tsx) are opt-in:
+# nothing in the SessionStart hook pipeline imports from node_modules,
+# and MCP runs remote (mcp.vade-app.dev). Contributors who want the
+# full local toolchain set VADE_BOOT_INSTALL=1.
+if [ "${VADE_BOOT_INSTALL:-0}" = "1" ]; then
+  ensure_tsx
+  install_deps /home/user/vade-core
 fi
-
-install_deps "$REPOS_ROOT/vade-core"
-
-ensure_agent_hooks "$SCRIPT_DIR"
-
-# In a cloud sandbox the setup script effectively IS the session start,
-# so run the digest inline. The hook also gets installed so any nested
-# `claude` invocations get a fresh digest.
-# bash "$SCRIPT_DIR/discussions-digest.sh" || true
 
 print_versions
 
@@ -46,13 +37,13 @@ print_versions
 # env should still come up even if 1Password is unreachable.
 # See vade-coo-memory/coo/cloud-env-bootstrap.md for the contract.
 # Anthropic cloud envs may scope custom env vars to the session process
-# and not expose them to the setup-script process; in that case the
-# SessionStart hook installed by ensure_agent_hooks picks up the slack.
+# only; the SessionStart hook in .claude/settings.json picks up the
+# slack in that case.
 if [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
-  bash "$SCRIPT_DIR/coo-bootstrap.sh" || \
+  bash /home/user/vade-runtime/scripts/coo-bootstrap.sh || \
     log "Warning: coo-bootstrap failed; continuing without COO identity."
 else
-  log "OP_SERVICE_ACCOUNT_TOKEN not visible at setup time; SessionStart hook will run coo-bootstrap at session start."
+  log "OP_SERVICE_ACCOUNT_TOKEN not visible at setup time; SessionStart hook will run coo-bootstrap."
 fi
 
-log "Done. vade-core at $REPOS_ROOT/vade-core, library at $HOME/.vade/library/"
+log "Done."

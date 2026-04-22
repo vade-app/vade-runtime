@@ -30,6 +30,8 @@ vade-runtime/
 ├── Dockerfile                ← base image
 ├── .devcontainer/
 │   └── devcontainer.json     ← VS Code / Codespaces entry point
+├── .claude/                  ← shared Claude Code config (cloud sessions)
+│   └── settings.json         ← hooks declared here; mirrored to ~/.claude/ at boot
 ├── scripts/
 │   ├── bootstrap.sh          ← first-run setup (npm install, dirs)
 │   ├── cloud-setup.sh        ← Claude Code web "Setup script" entry point
@@ -71,6 +73,26 @@ docker run -it --rm \
 ```bash
 docker run --rm vade-runtime bash /workspace/scripts/healthcheck.sh
 ```
+
+### With Claude Code on the web
+
+The harness clones `vade-core`, `vade-runtime`, and `vade-coo-memory` into
+`/home/user/` per session. Set the cloud environment's **Setup script** field
+to:
+
+```bash
+#!/bin/bash
+set -e
+bash /home/user/vade-runtime/scripts/cloud-setup.sh
+```
+
+`cloud-setup.sh` mirrors `vade-runtime/.claude/` into `~/.claude/`:
+subdirectories (`skills/`, `agents/`, `commands/`, `hooks/`) are symlinked so
+edits in the repo are live next session start; `settings.json` is copied so
+COO bootstrap can mutate the env block without dirtying the working tree.
+
+To opt into the full local toolchain (npm install on vade-core, `tsx` global)
+during cloud setup, set `VADE_BOOT_INSTALL=1` in the cloud environment vars.
 
 ## COO identity mode (cloud)
 

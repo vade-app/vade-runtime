@@ -41,15 +41,28 @@ install_deps() {
   fi
 }
 
-# Install the SessionStart hook that prints the discussions digest on
-# every Claude Code session start. Idempotent. Safe no-op if the
-# installer script is not present.
-ensure_agent_hooks() {
-  local script_dir="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/..}"
-  if [ -f "$script_dir/install-agent-hooks.sh" ]; then
-    bash "$script_dir/install-agent-hooks.sh" || \
-      log "Warning: agent hook install failed; continuing."
+# Mirror the committed .claude/ directory into Claude Code's user-scope
+# config dir. Subdirs (skills/, agents/, commands/, hooks/) are
+# symlinked so edits in the repo are live next SessionStart.
+# settings.json is copied so coo-bootstrap can mutate the env block
+# without dirtying the git working tree. Plans/, projects/, todos/,
+# statsig/ and other Claude Code-managed dirs are left alone.
+sync_claude_config() {
+  local src="${1:-/home/user/vade-runtime/.claude}"
+  local dst="${2:-$HOME/.claude}"
+  if [ ! -d "$src" ]; then
+    log "sync_claude_config: source $src missing; skipping"
+    return 0
   fi
+  mkdir -p "$dst"
+  for sub in skills agents commands hooks; do
+    [ -d "$src/$sub" ] && ln -snf "$src/$sub" "$dst/$sub"
+  done
+  if [ -f "$src/settings.json" ]; then
+    cp -f "$src/settings.json" "$dst/settings.json"
+    chmod 600 "$dst/settings.json"
+  fi
+  log "Synced $src → $dst (subdirs symlinked, settings.json copied)"
 }
 
 print_versions() {
