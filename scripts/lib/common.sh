@@ -29,6 +29,86 @@ bootstrap_log_record() {
   fi
 }
 
+# Durable cloud-state directory. Lives under /home/user/ so it survives
+# the snapshot-build → session-resume transition; ~/.vade/ is under
+# /root/ in the cloud image and gets fresh on every session boot, which
+# is useful for session-scope logs but useless for recording what
+# cloud-setup.sh actually did at build time. Keep session-scope state in
+# ~/.vade/, snapshot-scope state here.
+VADE_CLOUD_STATE_DIR="/home/user/.vade-cloud-state"
+VADE_BUILD_LOG="${VADE_CLOUD_STATE_DIR}/build.log"
+VADE_SETUP_RECEIPT="${VADE_CLOUD_STATE_DIR}/setup-receipt.json"
+
+# Same shape as bootstrap_log_record but writes to the durable build log.
+# Use from cloud-setup.sh and anything else running at snapshot-build
+# time — PROBE entries, step transitions, timing — so sessions can
+# diagnose "did build time actually run" without archaeology.
+build_log_record() {
+  local status="$1"; shift
+  local message="$*"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if ! mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null; then
+    log "Warning: could not create $VADE_CLOUD_STATE_DIR; build log entry dropped"
+    return 0
+  fi
+  if ! printf '%s %s %s\n' "$ts" "$status" "$message" >> "$VADE_BUILD_LOG" 2>/dev/null; then
+    log "Warning: could not append to $VADE_BUILD_LOG; entry dropped"
+    return 0
+  fi
+  if [ "$(wc -l < "$VADE_BUILD_LOG" 2>/dev/null || echo 0)" -gt 500 ]; then
+    tail -n 500 "$VADE_BUILD_LOG" > "${VADE_BUILD_LOG}.tmp" 2>/dev/null \
+      && mv -f "${VADE_BUILD_LOG}.tmp" "$VADE_BUILD_LOG" 2>/dev/null
+  fi
+}
+
+# Write a JSON receipt at the end of cloud-setup.sh recording what
+# succeeded. coo-identity-digest reads this to surface build-time state
+# in the SessionStart digest block; missing file = cloud-setup didn't
+# run (or failed before reaching the end). Accepts pairs of key=value
+# args; values are emitted as booleans when "true"/"false", as numbers
+# when all digits, as JSON strings otherwise.
+#
+# Usage:
+#   build_receipt_write \
+#     built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+#     op_token_visible=true \
+#     coo_bootstrap_ran=false \
+#     git_sha=abc123
+build_receipt_write() {
+  if ! mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null; then
+    log "Warning: could not create $VADE_CLOUD_STATE_DIR; setup-receipt skipped"
+    return 0
+  fi
+  if ! check_cmd node; then
+    log "Warning: node missing; writing receipt as plain key=value list"
+    if ! printf '%s\n' "$@" > "$VADE_SETUP_RECEIPT" 2>/dev/null; then
+      log "Warning: could not write $VADE_SETUP_RECEIPT; receipt skipped"
+    fi
+    return 0
+  fi
+  node -e '
+    const fs = require("fs");
+    const [dst, ...pairs] = process.argv.slice(1);
+    const out = {};
+    for (const p of pairs) {
+      const eq = p.indexOf("=");
+      if (eq < 0) continue;
+      const k = p.slice(0, eq);
+      const v = p.slice(eq + 1);
+      if (v === "true") out[k] = true;
+      else if (v === "false") out[k] = false;
+      else if (/^-?\d+$/.test(v)) out[k] = Number(v);
+      else out[k] = v;
+    }
+    fs.writeFileSync(dst, JSON.stringify(out, null, 2) + "\n");
+  ' "$VADE_SETUP_RECEIPT" "$@" 2>/dev/null || {
+    log "Warning: build_receipt_write via node failed; skipping"
+    return 0
+  }
+  chmod 644 "$VADE_SETUP_RECEIPT" 2>/dev/null || true
+}
+
 # Retry a command with exponential backoff. Absorbs transient 1Password
 # API failures (503s, network blips) that killed past bootstrap runs —
 # one 503 on `op read` under `set -euo pipefail` was enough to bail the
@@ -212,6 +292,30 @@ ensure_workspace_mcp_config() {
   fi
   ln -snf "$src" "$dst"
   log "workspace-mcp: linked $dst → $src"
+}
+
+# Ensure /home/user/CLAUDE.md symlinks to vade-coo-memory/CLAUDE.md so
+# Claude Code's built-in memory auto-loader picks up the COO identity
+# instructions at session start (cwd=/home/user). Without this,
+# identity surfaces only via coo-identity-digest's echo, which fires
+# after MCP resolution and isn't visible to the harness memory system.
+# Idempotent, mirrors ensure_workspace_mcp_config's guards.
+ensure_workspace_identity_link() {
+  local src="${1:-/home/user/vade-coo-memory/CLAUDE.md}"
+  local dst="${2:-/home/user/CLAUDE.md}"
+  if [ ! -f "$src" ]; then
+    log "identity-link: source $src missing; skipping"
+    return 0
+  fi
+  if [ -L "$dst" ] && [ "$(readlink -f "$dst" 2>/dev/null)" = "$(readlink -f "$src" 2>/dev/null)" ]; then
+    return 0
+  fi
+  if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+    log "identity-link: $dst exists and is not a symlink; leaving it alone"
+    return 0
+  fi
+  ln -snf "$src" "$dst"
+  log "identity-link: linked $dst → $src"
 }
 
 print_versions() {

@@ -21,16 +21,39 @@ CLAUDE_MD="$MEM_REPO/CLAUDE.md"
 MEMOS="$MEM_REPO/coo/memos.md"
 BOOTSTRAP_LOG="${HOME}/.vade/coo-bootstrap.log"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
+WORKSPACE_IDENTITY_LINK="/home/user/CLAUDE.md"
+WORKSPACE_MCP_LINK="/home/user/.mcp.json"
+WORKSPACE_MCP_SRC="/home/user/vade-runtime/workspace-mcp.json"
+SETUP_RECEIPT="/home/user/.vade-cloud-state/setup-receipt.json"
 
 if [ ! -f "$CLAUDE_MD" ]; then
   echo "[vade-setup] coo-identity-digest: $CLAUDE_MD not found; skipping."
   exit 0
 fi
 
-echo "───────────────────────────────────────────────────────────────"
-echo "COO identity boot (vade-coo-memory/CLAUDE.md)"
-echo "───────────────────────────────────────────────────────────────"
-cat "$CLAUDE_MD"
+# Check whether Claude Code's built-in memory loader already picked up
+# the identity file via /home/user/CLAUDE.md → vade-coo-memory/CLAUDE.md.
+# When the symlink is present, the file is in context from turn one
+# and re-echoing would just duplicate content. When it's missing,
+# echo as a fallback so identity still lands (same behavior as before
+# C6a).
+identity_link_live=false
+if [ -L "$WORKSPACE_IDENTITY_LINK" ] && \
+   [ "$(readlink -f "$WORKSPACE_IDENTITY_LINK" 2>/dev/null)" = "$(readlink -f "$CLAUDE_MD" 2>/dev/null)" ]; then
+  identity_link_live=true
+fi
+
+if [ "$identity_link_live" = "true" ]; then
+  echo "───────────────────────────────────────────────────────────────"
+  echo "COO identity: /home/user/CLAUDE.md → vade-coo-memory/CLAUDE.md"
+  echo "(loaded by harness memory; skipping echo to avoid duplicate context)"
+  echo "───────────────────────────────────────────────────────────────"
+else
+  echo "───────────────────────────────────────────────────────────────"
+  echo "COO identity boot (vade-coo-memory/CLAUDE.md)"
+  echo "───────────────────────────────────────────────────────────────"
+  cat "$CLAUDE_MD"
+fi
 
 if [ -f "$MEMOS" ]; then
   echo ""
@@ -163,4 +186,84 @@ else
   echo "    VADE_FORCE_COO_BOOTSTRAP=1 bash /home/user/vade-runtime/scripts/coo-bootstrap.sh"
 fi
 
+echo "───────────────────────────────────────────────────────────────"
+
+# MCP surface probe — prerequisites that Claude Code needed at process
+# start for project-scope MCP servers (agentmail, github-coo, mem0) to
+# register. We can't see the live tool list from a Bash hook, but if
+# any prerequisite is missing the tools cannot have been loaded.
+# Surface these loudly so the agent knows to avoid attributable writes
+# until a /resume picks up the fix we've just applied.
+echo ""
+echo "───────────────────────────────────────────────────────────────"
+echo "MCP surface probe"
+echo "───────────────────────────────────────────────────────────────"
+
+mcp_link_ok=false
+mcp_link_state="missing"
+if [ -L "$WORKSPACE_MCP_LINK" ]; then
+  if [ "$(readlink -f "$WORKSPACE_MCP_LINK" 2>/dev/null)" = "$(readlink -f "$WORKSPACE_MCP_SRC" 2>/dev/null)" ]; then
+    mcp_link_ok=true
+    mcp_link_state="ok (→ $(readlink "$WORKSPACE_MCP_LINK" 2>/dev/null))"
+  else
+    mcp_link_state="wrong target (→ $(readlink "$WORKSPACE_MCP_LINK" 2>/dev/null))"
+  fi
+elif [ -e "$WORKSPACE_MCP_LINK" ]; then
+  mcp_link_state="present but not a symlink"
+fi
+echo "  /home/user/.mcp.json:     $mcp_link_state"
+
+id_link_state="missing"
+if [ -L "$WORKSPACE_IDENTITY_LINK" ]; then
+  if [ "$identity_link_live" = "true" ]; then
+    id_link_state="ok (→ $(readlink "$WORKSPACE_IDENTITY_LINK" 2>/dev/null))"
+  else
+    id_link_state="wrong target (→ $(readlink "$WORKSPACE_IDENTITY_LINK" 2>/dev/null))"
+  fi
+elif [ -e "$WORKSPACE_IDENTITY_LINK" ]; then
+  id_link_state="present but not a symlink"
+fi
+echo "  /home/user/CLAUDE.md:     $id_link_state"
+
+# Any failure = session started without the workspace-scope overrides.
+# Surface the fix path instead of letting the agent guess.
+if [ "$mcp_link_ok" != "true" ] || [ "$identity_link_live" != "true" ]; then
+  echo ""
+  echo "  ⚠ Workspace-scope overrides were NOT in place at Claude Code startup."
+  echo "    Project-scope MCPs (agentmail, github-coo, mem0) did not load this session,"
+  echo "    and COO identity was not auto-loaded by the harness memory system."
+  echo "    session-start-sync.sh has re-applied the symlinks in this hook pass."
+  echo "    Resume the session (/resume) to pick up the full MCP + identity surface."
+fi
+
+echo "───────────────────────────────────────────────────────────────"
+
+# Cloud build-time receipt — what did cloud-setup.sh actually do at
+# snapshot build? Present = build ran; missing = build skipped or the
+# setup script field in the Anthropic cloud UI is not wired.
+echo ""
+echo "───────────────────────────────────────────────────────────────"
+echo "Cloud build-time receipt"
+echo "───────────────────────────────────────────────────────────────"
+if [ -f "$SETUP_RECEIPT" ]; then
+  if check_cmd node; then
+    node -e '
+      const fs = require("fs");
+      try {
+        const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        for (const k of Object.keys(r)) {
+          const v = r[k];
+          console.log("  " + (k + ":").padEnd(25) + " " + v);
+        }
+      } catch (e) { console.log("  (unreadable: " + e.message + ")"); }
+    ' "$SETUP_RECEIPT" 2>/dev/null || cat "$SETUP_RECEIPT"
+  else
+    cat "$SETUP_RECEIPT"
+  fi
+else
+  echo "  (no receipt at $SETUP_RECEIPT)"
+  echo "  cloud-setup.sh did not run at snapshot build, or ran but aborted before writing the receipt."
+  echo "  Check the Anthropic cloud env 'Setup script' field —"
+  echo "    expected: bash /home/user/vade-runtime/scripts/cloud-setup.sh"
+fi
 echo "───────────────────────────────────────────────────────────────"
