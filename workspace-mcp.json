@@ -11,7 +11,7 @@
         "AGENTMAIL_API_KEY": "${AGENTMAIL_API_KEY}"
       }
     },
-    "github": {
+    "github-coo": {
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",
       "headers": {
