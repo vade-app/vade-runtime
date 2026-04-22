@@ -68,6 +68,19 @@ fi
 
 print_versions
 
+# Install the op CLI at snapshot-build time so the SessionStart-hook
+# bootstrap fallback never has to fetch it through the egress proxy
+# mid-session. The binary lands in /home/user/.local/bin/op which
+# survives the snapshot → resume transition. Idempotent: if a prior
+# build already installed it, this is a no-op. Non-fatal: a failure
+# here just means the SessionStart hook will retry (same as before).
+if ensure_op_cli; then
+  build_log_record OK "cloud-setup: op CLI installed at build time"
+else
+  build_log_record WARN "cloud-setup: op CLI install failed at build time; SessionStart hook will retry"
+  log "Warning: op CLI install failed at build time; SessionStart hook will retry."
+fi
+
 # COO identity bootstrap runs only when OP_SERVICE_ACCOUNT_TOKEN is set
 # in the cloud environment config. Non-fatal on failure — the base VADE
 # env should still come up even if 1Password is unreachable.
