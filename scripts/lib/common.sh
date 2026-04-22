@@ -34,8 +34,9 @@ bootstrap_log_record() {
 # /root/ in the cloud image and gets fresh on every session boot, which
 # is useful for session-scope logs but useless for recording what
 # cloud-setup.sh actually did at build time. Keep session-scope state in
-# ~/.vade/, snapshot-scope state here.
-VADE_CLOUD_STATE_DIR="/home/user/.vade-cloud-state"
+# ~/.vade/, snapshot-scope state here. Overridable so local-setup.sh
+# can point it at ~/.vade/local-state on macOS.
+VADE_CLOUD_STATE_DIR="${VADE_CLOUD_STATE_DIR:-/home/user/.vade-cloud-state}"
 VADE_BUILD_LOG="${VADE_CLOUD_STATE_DIR}/build.log"
 VADE_SETUP_RECEIPT="${VADE_CLOUD_STATE_DIR}/setup-receipt.json"
 
@@ -638,10 +639,14 @@ _op_to_file() {
   log "  wrote $path ($mode)"
 }
 
-# Write ~/.gitconfig with COO identity + SSH signing + auth-key push.
+# Write gitconfig with COO identity + SSH signing + auth-key push.
 # Per MEMO 2026-04-22-03, cloud sessions share the Mac's commit discipline.
+# Target path is overridable via VADE_COO_GITCONFIG so local-setup.sh can
+# route Claude's git through ~/.vade/gitconfig-coo (via GIT_CONFIG_GLOBAL)
+# without touching the user's personal ~/.gitconfig.
 write_coo_gitconfig() {
-  local gc="${HOME}/.gitconfig"
+  local gc="${VADE_COO_GITCONFIG:-${HOME}/.gitconfig}"
+  mkdir -p "$(dirname "$gc")"
   git config --file "$gc" user.name "COO"
   git config --file "$gc" user.email "coo@vade-app.dev"
   git config --file "$gc" gpg.format ssh
