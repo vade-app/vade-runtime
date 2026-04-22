@@ -221,6 +221,59 @@ retry() {
 # shellcheck source=/dev/null
 [ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
 
+# Block until coo-bootstrap.sh reaches a terminal state (OK/FAIL/SKIP)
+# in this session, then re-source coo-env so vars written during the
+# wait land in the calling process. SessionStart hooks run in parallel,
+# so any hook that consumes GITHUB_TOKEN / GITHUB_MCP_PAT / AGENTMAIL_API_KEY
+# (e.g. discussions-digest, coo-identity-digest's posture block) would
+# otherwise sample before bootstrap finishes and falsely report
+# "unset / degraded". Fast-exits after a 2s grace if no coo-bootstrap.sh
+# process is running (covers standalone invocations, hook disabled,
+# and bootstrap-already-finished cases).
+#
+# Args: $1 = timeout in seconds (default 60)
+# Exposes:
+#   VADE_BOOTSTRAP_WAIT_SAW_FRESH  — 1 if a fresh terminal state was seen, else 0
+#   VADE_BOOTSTRAP_WAIT_ELAPSED    — seconds actually waited
+#   VADE_BOOTSTRAP_WAIT_TIMEOUT    — configured timeout
+# Always returns 0.
+wait_for_coo_bootstrap() {
+  local timeout="${1:-60}"
+  local bootstrap_log="${HOME}/.vade/coo-bootstrap.log"
+  local start_epoch elapsed=0
+  start_epoch="$(date -u +%s)"
+  VADE_BOOTSTRAP_WAIT_SAW_FRESH=0
+  VADE_BOOTSTRAP_WAIT_TIMEOUT="$timeout"
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if [ -f "$bootstrap_log" ]; then
+      local last_line last_ts last_state last_epoch
+      last_line="$(tail -n 1 "$bootstrap_log" 2>/dev/null || true)"
+      last_ts="${last_line%% *}"
+      last_state="$(printf '%s' "$last_line" | awk '{print $2}')"
+      case "$last_state" in
+        OK|FAIL|SKIP)
+          # Portable ISO-8601 → epoch via node (already a hard dep of
+          # the digest scripts; `date -d` is GNU-only).
+          last_epoch="$(node -e 'const t=Date.parse(process.argv[1]); process.stdout.write(isNaN(t)?"0":String(Math.floor(t/1000)))' "$last_ts" 2>/dev/null || echo 0)"
+          if [ "$last_epoch" -ge "$start_epoch" ]; then
+            VADE_BOOTSTRAP_WAIT_SAW_FRESH=1
+            break
+          fi
+          ;;
+      esac
+    fi
+    if [ "$elapsed" -ge 2 ] && ! pgrep -f coo-bootstrap.sh >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  VADE_BOOTSTRAP_WAIT_ELAPSED="$elapsed"
+  # shellcheck source=/dev/null
+  [ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
+  return 0
+}
+
 check_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
