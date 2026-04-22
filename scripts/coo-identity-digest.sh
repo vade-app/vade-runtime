@@ -105,43 +105,12 @@ echo "────────────────────────�
 # degraded even when coo-bootstrap eventually completes cleanly (the
 # first user-visible regression after PR #20 landed: verification
 # run reported "degraded" despite OK-step=complete in the log).
-#
-# Strategy: poll the bootstrap log for a terminal state (OK/FAIL/SKIP)
-# timestamped at-or-after this digest's start. If bootstrap hasn't
-# written for this session yet, wait — but only as long as a
-# coo-bootstrap.sh process is actually running, plus a short grace
-# window. A hook that never fires (or a standalone digest invocation)
-# exits the wait quickly instead of wedging boot for the full timeout.
-_digest_start_epoch="$(date -u +%s)"
-_digest_wait_timeout=60
-_digest_wait_elapsed=0
-_digest_saw_fresh=0
-while [ "$_digest_wait_elapsed" -lt "$_digest_wait_timeout" ]; do
-  if [ -f "$BOOTSTRAP_LOG" ]; then
-    _last_line="$(tail -n 1 "$BOOTSTRAP_LOG" 2>/dev/null || true)"
-    _last_ts="${_last_line%% *}"
-    _last_state="$(printf '%s' "$_last_line" | awk '{print $2}')"
-    case "$_last_state" in
-      OK|FAIL|SKIP)
-        # Portable ISO-8601 → epoch. `date -d` is GNU-only (no-op on macOS);
-        # node handles both hosts and is already a hard dep for this script.
-        _last_epoch="$(node -e 'const t=Date.parse(process.argv[1]); process.stdout.write(isNaN(t)?"0":String(Math.floor(t/1000)))' "$_last_ts" 2>/dev/null || echo 0)"
-        if [ "$_last_epoch" -ge "$_digest_start_epoch" ]; then
-          _digest_saw_fresh=1
-          break
-        fi
-        ;;
-    esac
-  fi
-  # Fast-exit when bootstrap isn't running and we've given it a 2s
-  # grace to start. Covers three cases: hook disabled, bootstrap
-  # already finished before digest started, standalone debug invocation.
-  if [ "$_digest_wait_elapsed" -ge 2 ] && ! pgrep -f coo-bootstrap.sh >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-  _digest_wait_elapsed=$((_digest_wait_elapsed + 1))
-done
+# Shared helper in lib/common.sh; exposes
+# VADE_BOOTSTRAP_WAIT_{SAW_FRESH,ELAPSED,TIMEOUT}.
+wait_for_coo_bootstrap 60
+_digest_saw_fresh="${VADE_BOOTSTRAP_WAIT_SAW_FRESH:-0}"
+_digest_wait_elapsed="${VADE_BOOTSTRAP_WAIT_ELAPSED:-0}"
+_digest_wait_timeout="${VADE_BOOTSTRAP_WAIT_TIMEOUT:-60}"
 
 echo ""
 echo "───────────────────────────────────────────────────────────────"
@@ -162,12 +131,6 @@ if [ "$_digest_saw_fresh" -eq 0 ]; then
     echo "  Note: no fresh bootstrap state this session (hook didn't fire, or finished before digest started)."
   fi
 fi
-
-# Re-source coo-env in case bootstrap just wrote it. common.sh sourced
-# the file once at script load; a second source picks up any keys
-# added during the wait above.
-# shellcheck source=/dev/null
-[ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
 
 env_has_pat="no"; env_has_mail="no"
 [ -n "${GITHUB_MCP_PAT:-}" ]    && env_has_pat="yes"
