@@ -26,6 +26,9 @@ if [ "${1:-}" = "--end" ]; then
   MODE="end"
 fi
 
+boot_log_record "session-lifecycle-$MODE" start
+trap 'boot_log_record "session-lifecycle-$MODE" end ok' EXIT
+
 # Claude Code's Write tool resolves ~/ to /home/user in the cloud
 # container while bash $HOME is /root. Plans authored through
 # Claude's tools therefore land at a different path than the hook

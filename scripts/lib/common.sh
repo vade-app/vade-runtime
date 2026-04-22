@@ -63,6 +63,47 @@ build_log_record() {
   fi
 }
 
+# Per-session structured boot log. One JSON line per event, written by
+# every SessionStart/Stop hook at key phases (start, major step, end).
+# Lets integrity-check.sh reconstruct the boot timeline from a single
+# file rather than correlating across claude-code.log, env-manager.log,
+# and the per-script logs. Safe to call without node (pure printf).
+#
+# Usage:
+#   boot_log_record session-start-sync start
+#   boot_log_record session-start-sync sync_claude_config ok
+#   boot_log_record session-start-sync end ok duration_ms=9
+VADE_BOOT_LOG="${HOME}/.vade/boot.log"
+boot_log_record() {
+  local script="$1" phase="$2"; shift 2
+  local status="${1:-}"
+  [ "$#" -gt 0 ] && shift
+  local extras=""
+  for kv in "$@"; do
+    case "$kv" in
+      *=*) extras="$extras,\"${kv%%=*}\":\"${kv#*=}\"" ;;
+    esac
+  done
+  local ts ok_field=""
+  ts="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+  case "$status" in
+    ok|OK)   ok_field=',"ok":true' ;;
+    fail|FAIL) ok_field=',"ok":false' ;;
+    skip|SKIP) ok_field=',"ok":true,"skipped":true' ;;
+    "")      ok_field='' ;;
+    *)       ok_field=",\"status\":\"$status\"" ;;
+  esac
+  mkdir -p "$(dirname "$VADE_BOOT_LOG")" 2>/dev/null || return 0
+  printf '{"ts":"%s","session":"%s","script":"%s","phase":"%s"%s%s}\n' \
+    "$ts" "${CLAUDE_CODE_SESSION_ID:-unknown}" "$script" "$phase" "$ok_field" "$extras" \
+    >> "$VADE_BOOT_LOG" 2>/dev/null || return 0
+  # Bounded retention: 1000 lines ~ 100 KB, a few hundred sessions worth.
+  if [ "$(wc -l < "$VADE_BOOT_LOG" 2>/dev/null || echo 0)" -gt 1000 ]; then
+    tail -n 1000 "$VADE_BOOT_LOG" > "${VADE_BOOT_LOG}.tmp" 2>/dev/null \
+      && mv -f "${VADE_BOOT_LOG}.tmp" "$VADE_BOOT_LOG" 2>/dev/null
+  fi
+}
+
 # Write a JSON receipt at the end of cloud-setup.sh recording what
 # succeeded. coo-identity-digest reads this to surface build-time state
 # in the SessionStart digest block; missing file = cloud-setup didn't
@@ -220,7 +261,41 @@ sync_claude_config() {
   if [ -f "$src/settings.json" ]; then
     _sync_claude_settings "$src/settings.json" "$dst/settings.json"
   fi
-  log "Synced $src → $dst (subdirs symlinked, settings.json copied)"
+  # settings.json hooks reference $HOME/.claude/vade-hooks/dispatch.sh;
+  # install the shim alongside settings.json so both land atomically
+  # from a single sync_claude_config call.
+  ensure_hooks_dispatch_shim "$src" "$dst"
+  log "Synced $src → $dst (subdirs symlinked, settings.json copied, dispatch shim installed)"
+}
+
+# Install $HOME/.claude/vade-hooks/dispatch.sh pointing at the runtime
+# repo's hooks-dispatch.sh. Called from sync_claude_config, so every
+# build-time and session-start sync refreshes the shim — it self-heals
+# if the snapshot is stale or the target moved.
+#
+# The source is derived from the passed-in .claude dir, not hardcoded,
+# so local-setup.sh's custom runtime path works without extra plumbing.
+# Idempotent: if the symlink already points at the right target, no-op.
+ensure_hooks_dispatch_shim() {
+  local claude_src="$1" claude_dst="$2"
+  local runtime_src shim_src shim_dst
+  runtime_src="$(cd "$claude_src/.." 2>/dev/null && pwd)"
+  shim_src="$runtime_src/scripts/hooks-dispatch.sh"
+  shim_dst="$claude_dst/vade-hooks/dispatch.sh"
+  if [ ! -f "$shim_src" ]; then
+    log "hooks-dispatch: source $shim_src missing; skipping"
+    return 0
+  fi
+  mkdir -p "$(dirname "$shim_dst")"
+  if [ -L "$shim_dst" ] && [ "$(readlink -f "$shim_dst" 2>/dev/null)" = "$(readlink -f "$shim_src" 2>/dev/null)" ]; then
+    return 0
+  fi
+  if [ -e "$shim_dst" ] && [ ! -L "$shim_dst" ]; then
+    log "hooks-dispatch: $shim_dst exists and is not a symlink; leaving it alone"
+    return 0
+  fi
+  ln -snf "$shim_src" "$shim_dst"
+  log "hooks-dispatch: linked $shim_dst → $shim_src"
 }
 
 _sync_claude_subdir() {

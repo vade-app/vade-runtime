@@ -4,22 +4,22 @@
       {
         "matcher": "startup",
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-start-sync.sh\"" },
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/coo-bootstrap.sh\"" },
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/coo-identity-digest.sh\"" },
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/discussions-digest.sh\"" }
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-start-sync" },
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-bootstrap" },
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-identity-digest" },
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" discussions-digest" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-lifecycle.sh\"" }
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle" }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-lifecycle.sh\" --end" }
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end" }
         ]
       }
     ]
