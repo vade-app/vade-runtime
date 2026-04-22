@@ -32,6 +32,8 @@ vade-runtime/
 │   └── devcontainer.json     ← VS Code / Codespaces entry point
 ├── scripts/
 │   ├── bootstrap.sh          ← first-run setup (npm install, dirs)
+│   ├── cloud-setup.sh        ← Claude Code web "Setup script" entry point
+│   ├── coo-bootstrap.sh      ← COO identity setup (opt-in, see below)
 │   └── healthcheck.sh        ← smoke test: versions + PATH
 └── versions.lock             ← pinned tool versions + rationale
 ```
@@ -44,7 +46,7 @@ Copy (or symlink) the `.devcontainer/` folder into the vade-core
 checkout, then:
 
 ```bash
-cd ~/GitHub/VADE/repos/vade-core
+cd ~/GitHub/vade-app/vade-core
 code .
 # → "Reopen in Container" when prompted
 ```
@@ -69,6 +71,72 @@ docker run -it --rm \
 ```bash
 docker run --rm vade-runtime bash /workspace/scripts/healthcheck.sh
 ```
+
+## COO identity mode (cloud)
+
+Claude Code web sessions can boot with a specific agent identity
+(currently the `vade-coo` GitHub user) pre-wired: SSH keys for push
+and signing, git identity, GitHub PAT, AgentMail API key. The
+mechanism is opt-in via a single env var set in the cloud environment
+config. See `vade-coo-memory/coo/cloud-env-bootstrap.md` for the
+authoritative contract; architecture rationale in MEMO 2026-04-22-03.
+
+### Activation
+
+Set one env var in the Claude Code cloud environment → Environment
+variables tab:
+
+```
+OP_SERVICE_ACCOUNT_TOKEN=ops_...
+```
+
+On next session boot, `cloud-setup.sh` detects the token and invokes
+`scripts/coo-bootstrap.sh`, which:
+
+1. Installs the 1Password `op` CLI to `~/.local/bin/` if missing
+2. Authenticates with the service-account token
+3. Reads SSH keys + PAT + AgentMail key from a 1Password vault named
+   `COO`
+4. Writes `~/.ssh/vade-coo-auth`, `~/.ssh/vade-coo-sign`,
+   `~/.ssh/allowed_signers`, and `~/.gitconfig` with COO identity +
+   signed-commit config
+5. Writes `~/.vade/coo-env` (sourceable) and merges vars into
+   `~/.claude/settings.json` so `.mcp.json` `${GITHUB_MCP_PAT}` and
+   `${AGENTMAIL_API_KEY}` substitutions resolve
+6. Validates the PAT is actually for `vade-coo` — aborts loudly on
+   mismatch
+
+If `OP_SERVICE_ACCOUNT_TOKEN` is unset, the bootstrap is a silent
+no-op and the cloud env comes up in plain VADE mode.
+
+### 1Password vault contract
+
+The service account must have **read** access to a vault named `COO`
+containing four items:
+
+| Item reference | Type | What it holds |
+|---|---|---|
+| `op://COO/vade-coo-self-2026-04` | API Credential | GitHub fine-grained PAT (`credential` field) |
+| `op://COO/agentmail-vade-coo` | API Credential | AgentMail API key (`credential` field) |
+| `op://COO/vade-coo-auth` | SSH Key | GitHub auth key (`ed25519`) |
+| `op://COO/vade-coo-sign` | SSH Key | GitHub signing key (`ed25519`) |
+
+Fingerprints validated at boot:
+
+- auth: `SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys`
+- sign: `SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A`
+
+Mismatch = boot fails. Rotate keys → update fingerprints in
+`scripts/lib/common.sh` (`COO_AUTH_FP_EXPECTED`, `COO_SIGN_FP_EXPECTED`).
+
+### Extending to other sub-agents
+
+The pattern is copyable. For a new agent (e.g., Night's Watch, PM
+agent), create a parallel vault (`NIGHTS_WATCH`, `PM`), a parallel
+service account, and either (a) clone `coo-bootstrap.sh` with the
+new vault name, or (b) parameterize via a `VADE_AGENT_VAULT` env var
+when this list grows past two. Keep the fingerprint-validation step
+— it's cheap insurance against a wrong vault binding.
 
 ## Deferred
 
