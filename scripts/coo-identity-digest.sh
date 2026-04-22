@@ -16,7 +16,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-MEM_REPO="${COO_MEMORY_DIR:-/home/user/vade-coo-memory}"
+if [ -n "${COO_MEMORY_DIR:-}" ]; then
+  MEM_REPO="$COO_MEMORY_DIR"
+elif [ "$HOME" != "/home/user" ] && [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then
+  MEM_REPO="$HOME/GitHub/vade-app/vade-coo-memory"
+else
+  MEM_REPO="/home/user/vade-coo-memory"
+fi
 CLAUDE_MD="$MEM_REPO/CLAUDE.md"
 MEMOS="$MEM_REPO/coo/memos.md"
 BOOTSTRAP_LOG="${HOME}/.vade/coo-bootstrap.log"
@@ -24,7 +30,14 @@ SETTINGS_FILE="${HOME}/.claude/settings.json"
 WORKSPACE_IDENTITY_LINK="/home/user/CLAUDE.md"
 WORKSPACE_MCP_LINK="/home/user/.mcp.json"
 WORKSPACE_MCP_SRC="/home/user/vade-runtime/.mcp.json"
-SETUP_RECEIPT="/home/user/.vade-cloud-state/setup-receipt.json"
+# common.sh seeds VADE_CLOUD_STATE_DIR with a cloud-host default; on Mac
+# local-setup.sh writes the receipt under ~/.vade/local-state/ and hook
+# subprocesses don't inherit its env exports. Redirect when the cloud
+# path is absent and the local path exists.
+if [ ! -d "$VADE_CLOUD_STATE_DIR" ] && [ -d "$HOME/.vade/local-state" ]; then
+  VADE_CLOUD_STATE_DIR="$HOME/.vade/local-state"
+fi
+SETUP_RECEIPT="${VADE_CLOUD_STATE_DIR}/setup-receipt.json"
 
 if [ ! -f "$CLAUDE_MD" ]; then
   echo "[vade-setup] coo-identity-digest: $CLAUDE_MD not found; skipping."
@@ -107,7 +120,9 @@ while [ "$_digest_wait_elapsed" -lt "$_digest_wait_timeout" ]; do
     _last_state="$(printf '%s' "$_last_line" | awk '{print $2}')"
     case "$_last_state" in
       OK|FAIL|SKIP)
-        _last_epoch="$(date -u -d "$_last_ts" +%s 2>/dev/null || echo 0)"
+        # Portable ISO-8601 → epoch. `date -d` is GNU-only (no-op on macOS);
+        # node handles both hosts and is already a hard dep for this script.
+        _last_epoch="$(node -e 'const t=Date.parse(process.argv[1]); process.stdout.write(isNaN(t)?"0":String(Math.floor(t/1000)))' "$_last_ts" 2>/dev/null || echo 0)"
         if [ "$_last_epoch" -ge "$_digest_start_epoch" ]; then
           _digest_saw_fresh=1
           break
@@ -183,7 +198,7 @@ else
   echo ""
   echo "  WARN: identity is degraded — required env vars are missing."
   echo "  Inspect $BOOTSTRAP_LOG for the failing step, then re-run:"
-  echo "    VADE_FORCE_COO_BOOTSTRAP=1 bash /home/user/vade-runtime/scripts/coo-bootstrap.sh"
+  echo "    VADE_FORCE_COO_BOOTSTRAP=1 bash \"${CLAUDE_PROJECT_DIR:-/home/user/vade-runtime}/scripts/coo-bootstrap.sh\""
 fi
 
 echo "───────────────────────────────────────────────────────────────"
@@ -194,49 +209,56 @@ echo "────────────────────────�
 # any prerequisite is missing the tools cannot have been loaded.
 # Surface these loudly so the agent knows to avoid attributable writes
 # until a /resume picks up the fix we've just applied.
-echo ""
-echo "───────────────────────────────────────────────────────────────"
-echo "MCP surface probe"
-echo "───────────────────────────────────────────────────────────────"
-
-mcp_link_ok=false
-mcp_link_state="missing"
-if [ -L "$WORKSPACE_MCP_LINK" ]; then
-  if [ "$(readlink -f "$WORKSPACE_MCP_LINK" 2>/dev/null)" = "$(readlink -f "$WORKSPACE_MCP_SRC" 2>/dev/null)" ]; then
-    mcp_link_ok=true
-    mcp_link_state="ok (→ $(readlink "$WORKSPACE_MCP_LINK" 2>/dev/null))"
-  else
-    mcp_link_state="wrong target (→ $(readlink "$WORKSPACE_MCP_LINK" 2>/dev/null))"
-  fi
-elif [ -e "$WORKSPACE_MCP_LINK" ]; then
-  mcp_link_state="present but not a symlink"
-fi
-echo "  /home/user/.mcp.json:     $mcp_link_state"
-
-id_link_state="missing"
-if [ -L "$WORKSPACE_IDENTITY_LINK" ]; then
-  if [ "$identity_link_live" = "true" ]; then
-    id_link_state="ok (→ $(readlink "$WORKSPACE_IDENTITY_LINK" 2>/dev/null))"
-  else
-    id_link_state="wrong target (→ $(readlink "$WORKSPACE_IDENTITY_LINK" 2>/dev/null))"
-  fi
-elif [ -e "$WORKSPACE_IDENTITY_LINK" ]; then
-  id_link_state="present but not a symlink"
-fi
-echo "  /home/user/CLAUDE.md:     $id_link_state"
-
-# Any failure = session started without the workspace-scope overrides.
-# Surface the fix path instead of letting the agent guess.
-if [ "$mcp_link_ok" != "true" ] || [ "$identity_link_live" != "true" ]; then
+#
+# Cloud-only: the /home/user/.mcp.json and /home/user/CLAUDE.md symlinks
+# exist because the cloud container's cwd is /home/user, not the project
+# dir. On local Mac, Claude Code's cwd is the project dir itself, so it
+# loads .mcp.json and CLAUDE.md natively without the workspace bridge.
+if [ "$HOME" = "/home/user" ]; then
   echo ""
-  echo "  ⚠ Workspace-scope overrides were NOT in place at Claude Code startup."
-  echo "    Project-scope MCPs (agentmail, github-coo, mem0) did not load this session,"
-  echo "    and COO identity was not auto-loaded by the harness memory system."
-  echo "    session-start-sync.sh has re-applied the symlinks in this hook pass."
-  echo "    Resume the session (/resume) to pick up the full MCP + identity surface."
-fi
+  echo "───────────────────────────────────────────────────────────────"
+  echo "MCP surface probe"
+  echo "───────────────────────────────────────────────────────────────"
 
-echo "───────────────────────────────────────────────────────────────"
+  mcp_link_ok=false
+  mcp_link_state="missing"
+  if [ -L "$WORKSPACE_MCP_LINK" ]; then
+    if [ "$(readlink -f "$WORKSPACE_MCP_LINK" 2>/dev/null)" = "$(readlink -f "$WORKSPACE_MCP_SRC" 2>/dev/null)" ]; then
+      mcp_link_ok=true
+      mcp_link_state="ok (→ $(readlink "$WORKSPACE_MCP_LINK" 2>/dev/null))"
+    else
+      mcp_link_state="wrong target (→ $(readlink "$WORKSPACE_MCP_LINK" 2>/dev/null))"
+    fi
+  elif [ -e "$WORKSPACE_MCP_LINK" ]; then
+    mcp_link_state="present but not a symlink"
+  fi
+  echo "  /home/user/.mcp.json:     $mcp_link_state"
+
+  id_link_state="missing"
+  if [ -L "$WORKSPACE_IDENTITY_LINK" ]; then
+    if [ "$identity_link_live" = "true" ]; then
+      id_link_state="ok (→ $(readlink "$WORKSPACE_IDENTITY_LINK" 2>/dev/null))"
+    else
+      id_link_state="wrong target (→ $(readlink "$WORKSPACE_IDENTITY_LINK" 2>/dev/null))"
+    fi
+  elif [ -e "$WORKSPACE_IDENTITY_LINK" ]; then
+    id_link_state="present but not a symlink"
+  fi
+  echo "  /home/user/CLAUDE.md:     $id_link_state"
+
+  # Any failure = session started without the workspace-scope overrides.
+  # Surface the fix path instead of letting the agent guess.
+  if [ "$mcp_link_ok" != "true" ] || [ "$identity_link_live" != "true" ]; then
+    echo ""
+    echo "  ⚠ Workspace-scope overrides were NOT in place at Claude Code startup."
+    echo "    Project-scope MCPs (agentmail, github-coo, mem0) did not load this session,"
+    echo "    and COO identity was not auto-loaded by the harness memory system."
+    echo "    session-start-sync.sh has re-applied the symlinks in this hook pass."
+    echo "    Resume the session (/resume) to pick up the full MCP + identity surface."
+  fi
+
+  echo "───────────────────────────────────────────────────────────────"
+fi
 
 # Cloud build-time receipt — what did cloud-setup.sh actually do at
 # snapshot build? Present = build ran; missing = build skipped or the

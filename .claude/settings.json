@@ -4,22 +4,22 @@
       {
         "matcher": "startup",
         "hooks": [
-          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/session-start-sync.sh" },
-          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/coo-bootstrap.sh" },
-          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/coo-identity-digest.sh" },
-          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/discussions-digest.sh" }
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-start-sync.sh\"" },
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/coo-bootstrap.sh\"" },
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/coo-identity-digest.sh\"" },
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/discussions-digest.sh\"" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/session-lifecycle.sh" }
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-lifecycle.sh\"" }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash /home/user/vade-runtime/scripts/session-lifecycle.sh --end" }
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-lifecycle.sh\" --end" }
         ]
       }
     ]
