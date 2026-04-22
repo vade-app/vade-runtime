@@ -459,6 +459,20 @@ COO_AUTH_FP_EXPECTED="SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys"
 COO_SIGN_FP_EXPECTED="SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A"
 
 ensure_op_cli() {
+  # Install into a snapshot-persistent path so a build-time install is
+  # still on disk at session-resume time. /root/ resets each resume in
+  # the cloud image; /home/user/ survives the snapshot. Without this,
+  # the SessionStart-hook bootstrap fallback has to re-fetch op from
+  # cache.agilebits.com mid-session and dies whenever Anthropic's
+  # egress proxy is flaky (see run-2026-04-22T062313 and
+  # run-2026-04-22T213126: "DNS cache overflow" 503 from the egress
+  # gateway, both times).
+  local bindir="/home/user/.local/bin"
+  case ":$PATH:" in
+    *":$bindir:"*) ;;
+    *) export PATH="$bindir:$PATH" ;;
+  esac
+
   if check_cmd op; then
     log "op CLI present: $(op --version 2>&1 | head -1)"
     return 0
@@ -473,17 +487,15 @@ ensure_op_cli() {
     *) log "op CLI: unsupported arch '$arch'"; return 1 ;;
   esac
 
-  local bindir="${HOME}/.local/bin"
   mkdir -p "$bindir"
 
   local url="https://cache.agilebits.com/dist/1P/op2/pkg/v${version}/op_linux_${arch}_v${version}.zip"
   local tmp
   tmp="$(mktemp -d)"
-  log "Downloading op CLI v${version} (${arch})"
+  log "Downloading op CLI v${version} (${arch}) → $bindir"
   # cache.agilebits.com occasionally returns 5xx; retry absorbs the transient
-  # window. Without this, a single 503 kills the whole bootstrap chain and
-  # the session comes up with no COO identity — root cause of the
-  # run-2026-04-22T062313 degradation.
+  # window. Even with the build-time install above, retries are still useful
+  # when the snapshot is cold and this is the first install.
   if ! retry 3 curl -sfL "$url" -o "$tmp/op.zip"; then
     log "op CLI download failed after retries: $url"
     rm -rf "$tmp"
@@ -502,11 +514,6 @@ ensure_op_cli() {
 
   install -m 0755 "$tmp/op" "$bindir/op"
   rm -rf "$tmp"
-
-  case ":$PATH:" in
-    *":$bindir:"*) ;;
-    *) export PATH="$bindir:$PATH" ;;
-  esac
 
   if ! op --version >/dev/null 2>&1; then
     log "op CLI install appears broken"
