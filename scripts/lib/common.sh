@@ -4,6 +4,68 @@
 
 log() { echo "[vade-setup] $*"; }
 
+# Stderr-only variant so the message doesn't pollute stdout captures.
+# Used inside retry loops where the caller wraps us in $(...) to grab
+# a secret off stdout.
+log_err() { echo "[vade-setup] $*" >&2; }
+
+# Persistent bootstrap log. Every coo-bootstrap invocation appends one
+# line with a timestamp, status (OK / FAIL / SKIP), and a short message.
+# Identity-digest reads the tail of this file to surface the last
+# outcome on each session start, so silent failures leave a trail.
+COO_BOOTSTRAP_LOG="${HOME}/.vade/coo-bootstrap.log"
+
+bootstrap_log_record() {
+  local status="$1"; shift
+  local message="$*"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$(dirname "$COO_BOOTSTRAP_LOG")" 2>/dev/null || return 0
+  printf '%s %s %s\n' "$ts" "$status" "$message" >> "$COO_BOOTSTRAP_LOG" 2>/dev/null || return 0
+  # Keep the log bounded. 200 lines is ~10 KB, plenty for recent history.
+  if [ "$(wc -l < "$COO_BOOTSTRAP_LOG" 2>/dev/null || echo 0)" -gt 200 ]; then
+    tail -n 200 "$COO_BOOTSTRAP_LOG" > "${COO_BOOTSTRAP_LOG}.tmp" 2>/dev/null \
+      && mv -f "${COO_BOOTSTRAP_LOG}.tmp" "$COO_BOOTSTRAP_LOG" 2>/dev/null
+  fi
+}
+
+# Retry a command with exponential backoff. Absorbs transient 1Password
+# API failures (503s, network blips) that killed past bootstrap runs —
+# one 503 on `op read` under `set -euo pipefail` was enough to bail the
+# whole chain silently. Stdout of the successful attempt is passed
+# through unchanged so callers can still do `x="$(retry 3 op read ref)"`.
+# All log output goes to stderr.
+#
+# Usage: retry <tries> <cmd...>
+#   retry 3 op read 'op://COO/foo/credential'
+#   retry 3 op whoami >/dev/null
+retry() {
+  local tries="${1:-3}"
+  shift
+  local delay=1 attempt=0 rc=0
+  local err_file
+  err_file="$(mktemp 2>/dev/null)" || { "$@"; return $?; }
+  while [ "$attempt" -lt "$tries" ]; do
+    attempt=$((attempt+1))
+    if "$@" 2>"$err_file"; then
+      rm -f "$err_file"
+      return 0
+    fi
+    rc=$?
+    if [ "$attempt" -lt "$tries" ]; then
+      log_err "  retry ${attempt}/${tries} for: $* (rc=$rc; sleeping ${delay}s)"
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+  done
+  local last_err
+  last_err="$(tr '\n' ' ' < "$err_file" 2>/dev/null | cut -c1-240)"
+  log_err "  FAIL after ${tries} attempts: $* (last err: ${last_err:-<empty>})"
+  cat "$err_file" >&2 2>/dev/null || true
+  rm -f "$err_file"
+  return "$rc"
+}
+
 # Pick up COO env vars (GITHUB_TOKEN, GITHUB_MCP_PAT, AGENTMAIL_API_KEY)
 # if coo-bootstrap.sh has written them. No-op otherwise. Every script
 # that sources common.sh benefits — this covers the case where a
@@ -232,7 +294,7 @@ fetch_coo_secrets() {
   local github_pat="" agentmail_key=""
   local got=0
 
-  if github_pat="$(op read 'op://COO/vade-coo-self-2026-04/credential' 2>/dev/null)" && [ -n "$github_pat" ]; then
+  if github_pat="$(retry 3 op read 'op://COO/vade-coo-self-2026-04/credential')" && [ -n "$github_pat" ]; then
     log "  read GitHub PAT (len=${#github_pat})"
     got=$((got+1))
   else
@@ -240,7 +302,7 @@ fetch_coo_secrets() {
     log "  WARN: op://COO/vade-coo-self-2026-04/credential unavailable; GITHUB_MCP_PAT/GITHUB_TOKEN will be unset"
   fi
 
-  if agentmail_key="$(op read 'op://COO/agentmail-vade-coo/credential' 2>/dev/null)" && [ -n "$agentmail_key" ]; then
+  if agentmail_key="$(retry 3 op read 'op://COO/agentmail-vade-coo/credential')" && [ -n "$agentmail_key" ]; then
     log "  read AgentMail API key (len=${#agentmail_key})"
     got=$((got+1))
   else
@@ -428,8 +490,8 @@ install_coo_ssh_keys() {
 _op_to_file() {
   local ref="$1" path="$2" mode="$3"
   local content
-  if ! content="$(op read "$ref" 2>/dev/null)"; then
-    log "Failed to read $ref"
+  if ! content="$(retry 3 op read "$ref")"; then
+    log "Failed to read $ref after retries"
     return 1
   fi
   (
@@ -460,11 +522,14 @@ validate_coo_identity() {
     log "Skipping GitHub PAT validation (GITHUB_MCP_PAT unset; degraded bootstrap)"
     return 0
   fi
-  local login
-  login="$(curl -sfH "Authorization: Bearer ${GITHUB_MCP_PAT}" https://api.github.com/user \
-    | grep -o '"login":"[^"]*"' \
-    | head -1 \
-    | cut -d'"' -f4)"
+  local body login
+  if ! body="$(retry 3 curl -sfH "Authorization: Bearer ${GITHUB_MCP_PAT}" https://api.github.com/user)"; then
+    log "FATAL: GitHub /user lookup failed after retries; cannot confirm identity"
+    return 1
+  fi
+  # GitHub's JSON is indented with spaces around the colon ("login": "...").
+  # Tolerate optional whitespace so this doesn't silently fail.
+  login="$(printf '%s' "$body" | grep -oE '"login"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
   if [ "$login" != "vade-coo" ]; then
     log "FATAL: GitHub PAT validates as '${login:-unknown}', expected 'vade-coo'"
     return 1

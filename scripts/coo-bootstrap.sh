@@ -16,8 +16,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
+# Record every exit path in ~/.vade/coo-bootstrap.log so silent failures
+# still leave a trail. The identity-digest hook surfaces the tail of
+# this file on each session start.
+COO_BOOTSTRAP_STEP="init"
+_on_exit() {
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then
+    bootstrap_log_record OK "step=${COO_BOOTSTRAP_STEP} rc=0"
+  else
+    bootstrap_log_record FAIL "step=${COO_BOOTSTRAP_STEP} rc=${rc}"
+  fi
+  return $rc
+}
+trap _on_exit EXIT
+
 if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
   log "coo-bootstrap: OP_SERVICE_ACCOUNT_TOKEN unset; skipping COO identity setup."
+  COO_BOOTSTRAP_STEP="skip-no-op-token"
+  bootstrap_log_record SKIP "OP_SERVICE_ACCOUNT_TOKEN unset"
+  trap - EXIT
   exit 0
 fi
 
@@ -32,27 +50,44 @@ COO_BOOT_MARKER="${HOME}/.vade/.coo-bootstrap-done"
 if [ "${VADE_FORCE_COO_BOOTSTRAP:-0}" != "1" ] \
    && [ -f "$COO_ENV_FILE" ] && [ -f "$COO_BOOT_MARKER" ]; then
   log "coo-bootstrap: already complete this container; skipping."
+  COO_BOOTSTRAP_STEP="skip-marker-present"
+  bootstrap_log_record SKIP "marker present at $COO_BOOT_MARKER"
+  trap - EXIT
   exit 0
 fi
 
 log "coo-bootstrap: starting"
+bootstrap_log_record START "VADE_FORCE_COO_BOOTSTRAP=${VADE_FORCE_COO_BOOTSTRAP:-0}"
 
+COO_BOOTSTRAP_STEP="ensure_op_cli"
 ensure_op_cli
 
-# Verify the service-account token before attempting any reads.
-if ! op whoami >/dev/null 2>&1; then
-  log "FATAL: op whoami failed. Check OP_SERVICE_ACCOUNT_TOKEN and vault access."
+# Verify the service-account token before attempting any reads. Retry
+# to absorb transient 1Password API errors (503s).
+COO_BOOTSTRAP_STEP="op_whoami"
+if ! retry 3 op whoami >/dev/null; then
+  log "FATAL: op whoami failed after retries. Check OP_SERVICE_ACCOUNT_TOKEN and vault access."
   exit 1
 fi
 log "1Password service account authenticated: $(op whoami 2>/dev/null | head -1)"
 
+COO_BOOTSTRAP_STEP="install_coo_ssh_keys"
 install_coo_ssh_keys
+
+COO_BOOTSTRAP_STEP="fetch_coo_secrets"
 fetch_coo_secrets
+
+COO_BOOTSTRAP_STEP="write_coo_gitconfig"
 write_coo_gitconfig
+
+COO_BOOTSTRAP_STEP="validate_coo_identity"
 validate_coo_identity
+
+COO_BOOTSTRAP_STEP="summarize_coo_identity"
 summarize_coo_identity
 
 mkdir -p "$(dirname "$COO_BOOT_MARKER")"
 touch "$COO_BOOT_MARKER"
 
+COO_BOOTSTRAP_STEP="complete"
 log "coo-bootstrap: complete"
