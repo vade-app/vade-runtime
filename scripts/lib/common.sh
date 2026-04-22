@@ -4,6 +4,16 @@
 
 log() { echo "[vade-setup] $*"; }
 
+# Pick up COO env vars (GITHUB_TOKEN, GITHUB_MCP_PAT, AGENTMAIL_API_KEY)
+# if coo-bootstrap.sh has written them. No-op otherwise. Every script
+# that sources common.sh benefits — this covers the case where a
+# SessionStart hook subprocess needs those vars but didn't inherit
+# them from Claude Code's own env (settings.json is read only at
+# Claude Code startup, so the first session after provisioning has
+# a gap that this closes).
+# shellcheck source=/dev/null
+[ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
+
 check_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -138,15 +148,18 @@ ensure_op_cli() {
 # (0600) and into ~/.claude/settings.json env block so Claude Code
 # resolves ${GITHUB_MCP_PAT} / ${AGENTMAIL_API_KEY} at startup.
 fetch_coo_secrets() {
+  log "Fetching COO secrets from 1Password vault COO"
   local github_pat agentmail_key
   if ! github_pat="$(op read 'op://COO/vade-coo-self-2026-04/credential' 2>/dev/null)"; then
     log "Failed to read op://COO/vade-coo-self-2026-04/credential"
     return 1
   fi
+  log "  read GitHub PAT (len=${#github_pat})"
   if ! agentmail_key="$(op read 'op://COO/agentmail-vade-coo/credential' 2>/dev/null)"; then
     log "Failed to read op://COO/agentmail-vade-coo/credential"
     return 1
   fi
+  log "  read AgentMail API key (len=${#agentmail_key})"
 
   local env_file="${HOME}/.vade/coo-env"
   mkdir -p "$(dirname "$env_file")"
@@ -160,13 +173,13 @@ export AGENTMAIL_API_KEY='$agentmail_key'
 EOF
   )
   chmod 600 "$env_file"
+  log "  wrote $env_file (0600)"
 
   _write_claude_settings_env "$github_pat" "$agentmail_key"
 
   export GITHUB_MCP_PAT="$github_pat"
   export GITHUB_TOKEN="$github_pat"
   export AGENTMAIL_API_KEY="$agentmail_key"
-  log "Wrote $env_file and updated ~/.claude/settings.json env block"
 }
 
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
@@ -200,30 +213,75 @@ _write_claude_settings_env() {
     fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
   ' "$settings_file"
   chmod 600 "$settings_file"
+  log "  merged COO env vars into $settings_file"
+}
+
+# Ensure openssh-client is present (provides ssh-keygen + ssh-keyscan).
+# Returns 0 if available (or successfully installed), 1 otherwise.
+# Absence is tolerated by install_coo_ssh_keys (fingerprint check is
+# skipped with a warning) — we don't want a minimal base image to
+# block identity provisioning.
+ensure_openssh_client() {
+  if check_cmd ssh-keygen; then
+    return 0
+  fi
+  if ! check_cmd apt-get; then
+    log "openssh-client missing and apt-get unavailable; fingerprint check will be skipped"
+    return 1
+  fi
+  log "Installing openssh-client (needed for ssh-keygen fingerprint validation)"
+  if sudo -n true 2>/dev/null; then
+    sudo apt-get update -qq >/dev/null 2>&1 || true
+    sudo apt-get install -y --no-install-recommends openssh-client >/dev/null 2>&1
+  else
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y --no-install-recommends openssh-client >/dev/null 2>&1
+  fi
+  if check_cmd ssh-keygen; then
+    log "openssh-client installed"
+    return 0
+  fi
+  log "openssh-client install failed (no sudo or apt denied); fingerprint check will be skipped"
+  return 1
+}
+
+# Compute ssh-key fingerprint from a pubkey file. Returns empty on
+# failure. Wraps the pipeline so we can call it without tripping
+# pipefail/set -e in the caller.
+_fingerprint_of() {
+  local pub="$1"
+  ssh-keygen -lf "$pub" 2>/dev/null | awk '{print $2}' || true
 }
 
 # Install COO SSH keys from 1Password into ~/.ssh/. Validates
-# fingerprints against expected values; aborts on mismatch.
+# fingerprints against expected values when ssh-keygen is available;
+# logs a warning and continues when it is not (see ensure_openssh_client).
 install_coo_ssh_keys() {
   local ssh_dir="${HOME}/.ssh"
   mkdir -p "$ssh_dir"
   chmod 700 "$ssh_dir"
+  log "Installing COO SSH keys into $ssh_dir"
 
   _op_to_file "op://COO/vade-coo-auth/private key" "$ssh_dir/vade-coo-auth"     0600 || return 1
   _op_to_file "op://COO/vade-coo-auth/public key"  "$ssh_dir/vade-coo-auth.pub" 0644 || return 1
   _op_to_file "op://COO/vade-coo-sign/private key" "$ssh_dir/vade-coo-sign"     0600 || return 1
   _op_to_file "op://COO/vade-coo-sign/public key"  "$ssh_dir/vade-coo-sign.pub" 0644 || return 1
 
-  local fp_auth fp_sign
-  fp_auth="$(ssh-keygen -lf "$ssh_dir/vade-coo-auth.pub" 2>/dev/null | awk '{print $2}')"
-  fp_sign="$(ssh-keygen -lf "$ssh_dir/vade-coo-sign.pub" 2>/dev/null | awk '{print $2}')"
-  if [ "$fp_auth" != "$COO_AUTH_FP_EXPECTED" ]; then
-    log "FATAL: auth key fingerprint mismatch (got $fp_auth, expected $COO_AUTH_FP_EXPECTED)"
-    return 1
-  fi
-  if [ "$fp_sign" != "$COO_SIGN_FP_EXPECTED" ]; then
-    log "FATAL: signing key fingerprint mismatch (got $fp_sign, expected $COO_SIGN_FP_EXPECTED)"
-    return 1
+  if ensure_openssh_client; then
+    local fp_auth fp_sign
+    fp_auth="$(_fingerprint_of "$ssh_dir/vade-coo-auth.pub")"
+    fp_sign="$(_fingerprint_of "$ssh_dir/vade-coo-sign.pub")"
+    if [ "$fp_auth" != "$COO_AUTH_FP_EXPECTED" ]; then
+      log "FATAL: auth key fingerprint mismatch (got '${fp_auth:-empty}', expected $COO_AUTH_FP_EXPECTED)"
+      return 1
+    fi
+    if [ "$fp_sign" != "$COO_SIGN_FP_EXPECTED" ]; then
+      log "FATAL: signing key fingerprint mismatch (got '${fp_sign:-empty}', expected $COO_SIGN_FP_EXPECTED)"
+      return 1
+    fi
+    log "SSH key fingerprints validated"
+  else
+    log "WARNING: skipping SSH key fingerprint validation (ssh-keygen unavailable)"
   fi
 
   local allowed="$ssh_dir/allowed_signers"
@@ -232,10 +290,12 @@ install_coo_ssh_keys() {
     echo "coo@vade-app.dev $(cat "$ssh_dir/vade-coo-sign.pub")"
   } > "$allowed"
   chmod 644 "$allowed"
+  log "Wrote $allowed"
 
-  if ! grep -q '^github.com ' "$ssh_dir/known_hosts" 2>/dev/null; then
+  if check_cmd ssh-keyscan && ! grep -q '^github.com ' "$ssh_dir/known_hosts" 2>/dev/null; then
     ssh-keyscan -t rsa,ecdsa,ed25519 github.com 2>/dev/null >> "$ssh_dir/known_hosts" || true
     [ -f "$ssh_dir/known_hosts" ] && chmod 644 "$ssh_dir/known_hosts"
+    log "Added github.com to $ssh_dir/known_hosts"
   fi
 }
 
@@ -251,6 +311,7 @@ _op_to_file() {
     printf '%s\n' "$content" > "$path"
   )
   chmod "$mode" "$path"
+  log "  wrote $path ($mode)"
 }
 
 # Write ~/.gitconfig with COO identity + SSH signing + auth-key push.
@@ -282,11 +343,13 @@ validate_coo_identity() {
 }
 
 summarize_coo_identity() {
-  local fp_auth fp_sign
-  fp_auth="$(ssh-keygen -lf "${HOME}/.ssh/vade-coo-auth.pub" 2>/dev/null | awk '{print $2}')"
-  fp_sign="$(ssh-keygen -lf "${HOME}/.ssh/vade-coo-sign.pub" 2>/dev/null | awk '{print $2}')"
   log "COO identity active"
-  log "  auth  ${fp_auth:-unknown}"
-  log "  sign  ${fp_sign:-unknown}"
+  if check_cmd ssh-keygen; then
+    log "  auth  $(_fingerprint_of "${HOME}/.ssh/vade-coo-auth.pub" 2>/dev/null || echo unknown)"
+    log "  sign  $(_fingerprint_of "${HOME}/.ssh/vade-coo-sign.pub" 2>/dev/null || echo unknown)"
+  else
+    log "  auth  (ssh-keygen unavailable; fingerprint not shown)"
+    log "  sign  (ssh-keygen unavailable; fingerprint not shown)"
+  fi
   log "  agentmail key: $([ -n "${AGENTMAIL_API_KEY:-}" ] && echo present || echo MISSING)"
 }

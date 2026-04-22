@@ -45,9 +45,14 @@ print_versions
 # in the cloud environment config. Non-fatal on failure — the base VADE
 # env should still come up even if 1Password is unreachable.
 # See vade-coo-memory/coo/cloud-env-bootstrap.md for the contract.
+# Anthropic cloud envs may scope custom env vars to the session process
+# and not expose them to the setup-script process; in that case the
+# SessionStart hook installed by ensure_agent_hooks picks up the slack.
 if [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
   bash "$SCRIPT_DIR/coo-bootstrap.sh" || \
     log "Warning: coo-bootstrap failed; continuing without COO identity."
+else
+  log "OP_SERVICE_ACCOUNT_TOKEN not visible at setup time; SessionStart hook will run coo-bootstrap at session start."
 fi
 
 log "Done. vade-core at $REPOS_ROOT/vade-core, library at $HOME/.vade/library/"
