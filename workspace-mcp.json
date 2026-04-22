@@ -10,6 +10,13 @@
       "env": {
         "AGENTMAIL_API_KEY": "${AGENTMAIL_API_KEY}"
       }
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_MCP_PAT}"
+      }
     }
   }
 }
