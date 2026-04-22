@@ -167,6 +167,50 @@ else
   echo "    VADE_FORCE_COO_BOOTSTRAP=1 bash \"${CLAUDE_PROJECT_DIR:-/home/user/vade-runtime}/scripts/coo-bootstrap.sh\""
 fi
 
+# Classify OP_SERVICE_ACCOUNT_TOKEN visibility across build/session. The
+# build receipt records whether the token was in env when cloud-setup.sh
+# ran at snapshot-build time; session env tells us where it is now.
+# Four labeled outcomes:
+#   ok           — token at build: first-session MCPs authenticate from turn 0
+#   session-only — token only at session boot: first session of every fresh
+#                  container boots with empty ${GITHUB_MCP_PAT}, github-coo
+#                  MCP hits HTTP 400, /resume recovers it. Platform-level fix
+#                  is to declare OP_SERVICE_ACCOUNT_TOKEN in the Anthropic
+#                  cloud "Setup script" environment, not just the session env.
+#   missing      — absent at both: COO identity dark until env is provisioned
+#   unknown      — no receipt to compare against (build-time setup didn't run)
+_op_build_seen="unknown"
+if [ -f "$SETUP_RECEIPT" ] && check_cmd node; then
+  _op_build_seen="$(node -e '
+    try {
+      const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      console.log(r.op_token_visible === true ? "yes" : "no");
+    } catch (_) { console.log("unknown"); }
+  ' "$SETUP_RECEIPT" 2>/dev/null || echo unknown)"
+fi
+_op_session_seen="no"
+[ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && _op_session_seen="yes"
+
+case "$_op_build_seen/$_op_session_seen" in
+  yes/*)
+    ;;
+  no/yes)
+    echo ""
+    echo "  ⚠ OP_SERVICE_ACCOUNT_TOKEN is injected at session-boot only, not build."
+    echo "    Every fresh container's FIRST session has github-coo MCP unauthenticated"
+    echo "    (empty \${GITHUB_MCP_PAT} substitution → HTTP 400). /resume recovers it."
+    echo "    Platform fix: add OP_SERVICE_ACCOUNT_TOKEN to the Anthropic cloud"
+    echo "    'Setup script' environment — then coo-bootstrap runs at build and"
+    echo "    MCPs authenticate from turn zero."
+    ;;
+  no/no)
+    echo ""
+    echo "  ⚠ OP_SERVICE_ACCOUNT_TOKEN absent at build AND session. COO identity is dark."
+    ;;
+  unknown/*)
+    ;;
+esac
+
 echo "───────────────────────────────────────────────────────────────"
 
 # MCP surface probe — prerequisites that Claude Code needed at process
