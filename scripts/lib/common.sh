@@ -508,6 +508,7 @@ print_versions() {
 # in vade-coo-memory/coo/cloud-env-bootstrap.md.
 
 OP_VERSION_DEFAULT="2.31.0"
+GH_VERSION_DEFAULT="2.91.0"
 COO_AUTH_FP_EXPECTED="SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys"
 COO_SIGN_FP_EXPECTED="SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A"
 
@@ -573,6 +574,83 @@ ensure_op_cli() {
     return 1
   fi
   log "Installed op CLI: $(op --version 2>&1 | head -1)"
+}
+
+# Durable GitHub write path for COO attribution.
+#
+# Installs the gh CLI into the same snapshot-persistent location as the
+# op CLI (/home/user/.local/bin in cloud, ${HOME}/.local/bin otherwise),
+# so it survives the snapshot → resume transition with no per-resume
+# fetch. check_cmd gh short-circuits when gh is already present (local
+# macOS via brew, devcontainer pre-install, or a prior build).
+#
+# Rationale: vade-app/vade-runtime#36 documents the mcp__github-coo__*
+# streamable-HTTP transport failure ("DNS cache overflow") that forces
+# attribution to fall through to venpopov via mcp__github__* when the
+# MCP is degraded. `gh` authenticated with $GITHUB_MCP_PAT preserves
+# vade-coo opener attribution under the same PAT, via short-lived HTTPS
+# request/response cycles that bypass the failing transport. Same token,
+# same identity, different wire — MEMO 2026-04-22-04 attribution
+# invariant stays load-bearing even when the primary MCP is down.
+ensure_gh_cli() {
+  local bindir
+  if [ "$(id -u)" = "0" ] && [ -d /home/user ]; then
+    bindir="/home/user/.local/bin"
+  else
+    bindir="${HOME}/.local/bin"
+  fi
+  case ":$PATH:" in
+    *":$bindir:"*) ;;
+    *) export PATH="$bindir:$PATH" ;;
+  esac
+
+  if check_cmd gh; then
+    log "gh CLI present: $(gh --version 2>&1 | head -1)"
+    return 0
+  fi
+
+  local version="${GH_VERSION:-$GH_VERSION_DEFAULT}"
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) log "gh CLI: unsupported arch '$arch'"; return 1 ;;
+  esac
+
+  mkdir -p "$bindir"
+
+  local url="https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${arch}.tar.gz"
+  local tmp
+  tmp="$(mktemp -d)"
+  log "Downloading gh CLI v${version} (${arch}) → $bindir"
+  if ! retry 3 curl -sfL "$url" -o "$tmp/gh.tar.gz"; then
+    log "gh CLI download failed after retries: $url"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if ! tar -xzf "$tmp/gh.tar.gz" -C "$tmp"; then
+    log "gh CLI extraction failed"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local gh_bin
+  gh_bin="$(find "$tmp" -type f -name gh -path '*/bin/gh' | head -1)"
+  if [ -z "$gh_bin" ] || [ ! -f "$gh_bin" ]; then
+    log "gh CLI: extracted tarball missing bin/gh"
+    rm -rf "$tmp"
+    return 1
+  fi
+  install -m 0755 "$gh_bin" "$bindir/gh"
+  rm -rf "$tmp"
+
+  if ! gh --version >/dev/null 2>&1; then
+    log "gh CLI install appears broken"
+    return 1
+  fi
+  log "Installed gh CLI: $(gh --version 2>&1 | head -1)"
 }
 
 # Fetch COO secrets from 1Password and write ~/.vade/coo-env plus a
