@@ -920,10 +920,26 @@ _op_to_file() {
 }
 
 # Write gitconfig with COO identity + SSH signing + auth-key push.
-# Per MEMO 2026-04-22-03, cloud sessions share the Mac's commit discipline.
 # Target path is overridable via VADE_COO_GITCONFIG so local-setup.sh can
 # route Claude's git through ~/.vade/gitconfig-coo (via GIT_CONFIG_GLOBAL)
 # without touching the user's personal ~/.gitconfig.
+#
+# Signing posture is platform-dependent (MEMO 2026-04-23-04).
+# The Claude Code cloud harness sets `gpg.ssh.program=/tmp/code-sign`, a
+# wrapper that intercepts `ssh-keygen -Y sign` and substitutes a
+# harness-managed key for the one user.signingkey names. Signed output
+# produced in cloud is therefore bound to a key that is not on any
+# GitHub account and can never pass verification (observed: local key
+# SHA256:pZeA8xyc…3nA; signer in signature SHA256:32dP45eS…2wc).
+# We detect the harness by the presence of the wrapper at /tmp/code-sign
+# OR CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE being set, and turn
+# commit.gpgsign/tag.gpgsign off there. Keys, allowed-signers file, and
+# core.sshCommand stay set on both platforms so Mac sessions still sign
+# normally and SSH auth works on both.
+_coo_signing_is_intercepted() {
+  [ -x /tmp/code-sign ] || [ -n "${CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE:-}" ]
+}
+
 write_coo_gitconfig() {
   local gc="${VADE_COO_GITCONFIG:-${HOME}/.gitconfig}"
   mkdir -p "$(dirname "$gc")"
@@ -931,11 +947,17 @@ write_coo_gitconfig() {
   git config --file "$gc" user.email "coo@vade-app.dev"
   git config --file "$gc" gpg.format ssh
   git config --file "$gc" user.signingkey "${HOME}/.ssh/vade-coo-sign.pub"
-  git config --file "$gc" commit.gpgsign true
-  git config --file "$gc" tag.gpgsign true
+  if _coo_signing_is_intercepted; then
+    git config --file "$gc" commit.gpgsign false
+    git config --file "$gc" tag.gpgsign false
+    log "Configured $gc (user=COO, signing=OFF — cloud harness detected; MEMO 2026-04-23-04)"
+  else
+    git config --file "$gc" commit.gpgsign true
+    git config --file "$gc" tag.gpgsign true
+    log "Configured $gc (user=COO, signing=ssh via vade-coo-sign.pub)"
+  fi
   git config --file "$gc" gpg.ssh.allowedSignersFile "${HOME}/.ssh/allowed_signers"
   git config --file "$gc" core.sshCommand "ssh -i ${HOME}/.ssh/vade-coo-auth -o IdentitiesOnly=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
-  log "Configured $gc (user=COO, signing=ssh via vade-coo-sign.pub)"
 }
 
 validate_coo_identity() {

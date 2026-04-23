@@ -214,7 +214,27 @@ else
 fi
 
 if [ -f "$HOME/.ssh/vade-coo-auth" ] && [ -f "$HOME/.ssh/vade-coo-sign" ]; then
-  _add D6 true "vade-coo-auth and vade-coo-sign keys installed"
+  # Keys present; now check the signing posture is internally consistent.
+  # Per MEMO 2026-04-23-04, cloud sessions (harness sets gpg.ssh.program
+  # to a code-sign wrapper at /tmp/code-sign that substitutes the signing
+  # key) must have commit.gpgsign=false and tag.gpgsign=false; Mac
+  # sessions (no wrapper) must have both =true so the registered
+  # vade-coo-sign key is actually used.
+  D6_commit="$(git config --global commit.gpgsign 2>/dev/null || echo '<unset>')"
+  D6_tag="$(git config --global tag.gpgsign 2>/dev/null || echo '<unset>')"
+  if [ -x /tmp/code-sign ] || [ -n "${CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE:-}" ]; then
+    if [ "$D6_commit" = "false" ] && [ "$D6_tag" = "false" ]; then
+      _add D6 true "keys+signing-off (cloud, per MEMO 2026-04-23-04)"
+    else
+      _add D6 false "cloud harness detected but commit.gpgsign=$D6_commit tag.gpgsign=$D6_tag (expect false/false; MEMO 2026-04-23-04)"
+    fi
+  else
+    if [ "$D6_commit" = "true" ] && [ "$D6_tag" = "true" ]; then
+      _add D6 true "keys+signing-on (local, vade-coo-sign)"
+    else
+      _add D6 false "no harness but commit.gpgsign=$D6_commit tag.gpgsign=$D6_tag (expect true/true)"
+    fi
+  fi
 else
   _add D6 false "vade-coo-{auth,sign} keys missing in $HOME/.ssh"
 fi
