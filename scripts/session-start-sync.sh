@@ -31,6 +31,11 @@ boot_log_record session-start-sync start
 sync_claude_config "$SCRIPT_DIR/../.claude"
 ensure_workspace_mcp_config
 ensure_workspace_identity_link
+# Bridge /home/user/.local/bin/gh (persistent install target) onto
+# /root/.local/bin (already on PATH for Claude's Bash tool) so the
+# MEMO 2026-04-23-02 gh-CLI fallback is callable without the agent
+# having to rediscover the install path every session.
+ensure_gh_symlink_on_path
 # Emit integrity-check.json so its snapshot is on disk before the
 # digest hook runs (which may surface a one-line summary). Non-fatal.
 bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
