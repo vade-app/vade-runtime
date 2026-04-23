@@ -15,6 +15,20 @@ node                20.19.1   # Active LTS as of April 2026. vade-core
 debian              bookworm  # Stable, recent glibc, slim variant
                               # keeps image small (~150 MB base).
 
+# Installed by scripts/lib/common.sh into snapshot-persistent paths
+# (/home/user/.local/bin on cloud, ${HOME}/.local/bin locally).
+op                  2.31.0    # 1Password CLI. Required by
+                              # scripts/coo-bootstrap.sh to read the
+                              # COO vault. Pinned via OP_VERSION_DEFAULT
+                              # in lib/common.sh.
+gh                  2.91.0    # GitHub CLI. Fallback write path under
+                              # vade-coo attribution when
+                              # mcp__github-coo__* is degraded (see
+                              # vade-app/vade-runtime#36). Same
+                              # fine-grained PAT as the MCP, via
+                              # $GITHUB_MCP_PAT in GH_TOKEN. Pinned via
+                              # GH_VERSION_DEFAULT in lib/common.sh.
+
 # Globally installed via npm
 @anthropic-ai/claude-code 1.0.120  # Claude Code CLI. Pinned to the
                                    # minor available at container

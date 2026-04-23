@@ -81,6 +81,19 @@ else
   log "Warning: op CLI install failed at build time; SessionStart hook will retry."
 fi
 
+# Install the gh CLI for the same reason: snapshot-persistent, no
+# per-resume fetch. Primary purpose is to give the COO a durable fallback
+# write path to GitHub under vade-coo attribution when mcp__github-coo__*
+# is degraded (see #36). Non-fatal: gh is not required for the base VADE
+# env to come up, only for degraded-MCP sessions to keep attribution
+# clean instead of falling through to venpopov.
+if ensure_gh_cli; then
+  build_log_record OK "cloud-setup: gh CLI installed at build time"
+else
+  build_log_record WARN "cloud-setup: gh CLI install failed at build time; sessions will lack the attribution fallback"
+  log "Warning: gh CLI install failed at build time; degraded-MCP sessions will fall through to venpopov attribution."
+fi
+
 # COO identity bootstrap runs only when OP_SERVICE_ACCOUNT_TOKEN is set
 # in the cloud environment config. Non-fatal on failure — the base VADE
 # env should still come up even if 1Password is unreachable.
