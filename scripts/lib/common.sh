@@ -578,11 +578,19 @@ ensure_op_cli() {
 
 # Durable GitHub write path for COO attribution.
 #
-# Installs the gh CLI into the same snapshot-persistent location as the
-# op CLI (/home/user/.local/bin in cloud, ${HOME}/.local/bin otherwise),
-# so it survives the snapshot → resume transition with no per-resume
-# fetch. check_cmd gh short-circuits when gh is already present (local
-# macOS via brew, devcontainer pre-install, or a prior build).
+# Installs the gh CLI into a snapshot-persistent path under the user's
+# .local/bin (/home/user/.local/bin when running as root with a
+# /home/user tree — cloud harness; ${HOME}/.local/bin otherwise) so it
+# survives the snapshot → resume transition with no per-resume fetch.
+# check_cmd gh short-circuits when gh is already present (local macOS
+# via brew, devcontainer pre-install, or a prior build).
+#
+# Linux-only auto-install. On macOS (Darwin) the expectation is that
+# `brew install gh` has already satisfied check_cmd; if it hasn't, this
+# function refuses rather than dropping a non-runnable Linux binary
+# into ${HOME}/.local/bin. ensure_op_cli is currently Linux-only too
+# but hardcodes its bindir; aligning that pattern is tracked separately
+# so this PR stays scoped.
 #
 # Rationale: vade-app/vade-runtime#36 documents the mcp__github-coo__*
 # streamable-HTTP transport failure ("DNS cache overflow") that forces
@@ -609,6 +617,20 @@ ensure_gh_cli() {
     return 0
   fi
 
+  local os
+  os="$(uname -s)"
+  case "$os" in
+    Linux) ;;
+    Darwin)
+      log "gh CLI not present on macOS; install via: brew install gh"
+      return 1
+      ;;
+    *)
+      log "gh CLI: unsupported OS '$os'"
+      return 1
+      ;;
+  esac
+
   local version="${GH_VERSION:-$GH_VERSION_DEFAULT}"
   local arch
   arch="$(uname -m)"
@@ -623,7 +645,7 @@ ensure_gh_cli() {
   local url="https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${arch}.tar.gz"
   local tmp
   tmp="$(mktemp -d)"
-  log "Downloading gh CLI v${version} (${arch}) → $bindir"
+  log "Downloading gh CLI v${version} (${os}/${arch}) → $bindir"
   if ! retry 3 curl -sfL "$url" -o "$tmp/gh.tar.gz"; then
     log "gh CLI download failed after retries: $url"
     rm -rf "$tmp"
