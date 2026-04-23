@@ -675,6 +675,28 @@ ensure_gh_cli() {
   log "Installed gh CLI: $(gh --version 2>&1 | head -1)"
 }
 
+# Expose gh on Claude Code's Bash-tool PATH every session.
+#
+# ensure_gh_cli installs to /home/user/.local/bin so the binary survives
+# cloud snapshot rebuilds, but the shell Claude spawns only has
+# /root/.local/bin on PATH. Bridge the two with a symlink so `gh`
+# resolves without the agent having to mutate PATH or discover the
+# install path. Cloud-only (root + /home/user present); on macOS/local
+# gh comes from brew and $HOME/.local/bin is already on PATH.
+# Idempotent via ln -sfn; no-op with a quiet log if the target is
+# missing (ensure_gh_cli is the installer).
+ensure_gh_symlink_on_path() {
+  [ "$(id -u)" = "0" ] && [ -d /home/user ] || return 0
+  local target="/home/user/.local/bin/gh"
+  local link="/root/.local/bin/gh"
+  if [ ! -x "$target" ]; then
+    log "gh symlink: $target missing; skipping (run ensure_gh_cli to install)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$link")"
+  ln -sfn "$target" "$link"
+}
+
 # Fetch COO secrets from 1Password and write ~/.vade/coo-env plus a
 # merged env block in ~/.claude/settings.json so Claude Code resolves
 # ${GITHUB_MCP_PAT} / ${AGENTMAIL_API_KEY} at startup. Each read is

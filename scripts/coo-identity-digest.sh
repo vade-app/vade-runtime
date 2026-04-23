@@ -270,6 +270,36 @@ if [ "$HOME" = "/home/user" ]; then
   echo "───────────────────────────────────────────────────────────────"
 fi
 
+# GitHub write surface — per MEMO 2026-04-23-02, the vade-coo
+# attribution invariant (MEMO -22-04) rides on the github-coo MCP when
+# healthy and on the gh CLI when the MCP streamable-HTTP transport
+# fails with a DNS-cache overflow (issue #36). This block reports
+# fallback readiness at turn zero so a new session doesn't have to
+# re-derive the protocol from memos when an MCP call hits the failure
+# mode mid-task. We deliberately don't probe MCP liveness from a bash
+# hook (same reason the MCP surface probe above sticks to filesystem
+# prerequisites).
+echo ""
+echo "───────────────────────────────────────────────────────────────"
+echo "GitHub write surface"
+echo "───────────────────────────────────────────────────────────────"
+if check_cmd gh; then
+  gh_ver="$(gh --version 2>/dev/null | head -1)"
+  printf "  %-25s %s\n" "gh CLI:" "${gh_ver:-present}"
+else
+  printf "  %-25s %s\n" "gh CLI:" "not found (expected /home/user/.local/bin/gh; run ensure_gh_cli)"
+fi
+if [ -n "${GITHUB_MCP_PAT:-}" ]; then
+  printf "  %-25s %s\n" "gh auth token:" "GITHUB_MCP_PAT present (gh will attribute as vade-coo)"
+else
+  printf "  %-25s %s\n" "gh auth token:" "GITHUB_MCP_PAT unset — /resume or check coo-bootstrap"
+fi
+echo "  MCP posture:              github-coo MCP preferred for attributable writes."
+echo "                            On 'Streamable HTTP error: DNS cache overflow',"
+echo "                            fall back to: GH_TOKEN=\$GITHUB_MCP_PAT gh <cmd>."
+echo "                            Same token, vade-coo identity (MEMO 2026-04-23-02)."
+echo "───────────────────────────────────────────────────────────────"
+
 # Cloud build-time receipt — what did cloud-setup.sh actually do at
 # snapshot build? Present = build ran; missing = build skipped or the
 # setup script field in the Anthropic cloud UI is not wired.
