@@ -105,17 +105,30 @@ done
 [ "$B1_ok" = true ] && B1_detail="all 5 hook scripts present in runtime"
 _add B1 "$B1_ok" "$B1_detail"
 
-# B3: last SessionStart chain outcomes in claude-code.log
+# B3: hook chain outcomes for the current session in boot.log.
+# The prior implementation grepped /tmp/claude-code.log cumulatively,
+# which (a) includes pre-fix historical failures forever and (b) over-
+# matched 'No such file or directory' from unrelated subsystems (e.g.
+# ripgrep probing a missing plugin cache). boot.log is per-hook-run
+# structured JSON; scoping to the most recent cse_* session gives a
+# current-state signal. Issue vade-runtime#41.
 B3_ok=skip
-B3_detail="claude-code.log not readable"
-if [ -r /tmp/claude-code.log ]; then
-  failures="$(grep -c 'Hook SessionStart:startup.*exit_code.*127\|No such file or directory' /tmp/claude-code.log 2>/dev/null || echo 0)"
-  if [ "$failures" -gt 0 ]; then
-    B3_ok=false
-    B3_detail="$failures failing hook entries in claude-code.log (grep on 'No such file')"
+B3_detail="boot.log not readable"
+if [ -r "$HOME/.vade/boot.log" ]; then
+  latest_session="$(grep -oE '"session":"cse_[^"]+' "$HOME/.vade/boot.log" 2>/dev/null | tail -1 | sed 's/^"session":"//')"
+  if [ -n "$latest_session" ]; then
+    failures="$(grep -F "\"session\":\"${latest_session}\"" "$HOME/.vade/boot.log" 2>/dev/null | grep -c '"ok":false' || true)"
+    failures="${failures:-0}"
+    if [ "$failures" -gt 0 ]; then
+      B3_ok=false
+      B3_detail="$failures failing hook entries in current session ($latest_session)"
+    else
+      B3_ok=true
+      B3_detail="no hook failures in current session ($latest_session)"
+    fi
   else
     B3_ok=true
-    B3_detail="no hook failure pattern in claude-code.log"
+    B3_detail="no tagged session in boot.log yet (pre-first-session)"
   fi
 fi
 _add B3 "$B3_ok" "$B3_detail"
@@ -179,7 +192,10 @@ fi
 
 if [ -f "$HOME/.vade/coo-bootstrap.log" ]; then
   tail_line="$(tail -n 1 "$HOME/.vade/coo-bootstrap.log" 2>/dev/null || true)"
-  if printf '%s' "$tail_line" | grep -qE 'OK step=complete|OK step=skip-'; then
+  # 'SKIP marker present' is the idempotent-skip terminal written by
+  # coo-bootstrap.sh when the marker file exists; it is a healthy
+  # resumed-container outcome. Issue vade-runtime#41.
+  if printf '%s' "$tail_line" | grep -qE 'OK step=complete|OK step=skip-|SKIP marker present'; then
     _add D3 true "coo-bootstrap.log tail: $tail_line"
   else
     _add D3 false "coo-bootstrap.log tail non-terminal: $tail_line"
