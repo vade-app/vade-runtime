@@ -1,6 +1,6 @@
 ---
 name: memo-search
-description: Find memos in `coo/memos.md` by natural-language query via Mem0 semantic search over the `memo_pointer` layer. Use when the user asks "do we have memos about X?" or "what have we decided re: Y?", when keyword `/memo-query <word>` returned too few hits (titles + summaries are keyword-indexed but bodies are not), when the current task or plan context suggests prior COO decisions may be relevant, or when `/memo-query --semantic "<query>"` is invoked. Returns memo IDs + line ranges; the caller reads full text from `coo/memos.md` via the printed `sed` command. Don't rely on keyword `/memo-query` alone — it has an ~88% body-miss rate on concept queries (see MEMO 2026-04-24-04).
+description: Find memos in `coo/memos.md` by natural-language query via Mem0 semantic search over the `memo_pointer` layer. Use when the user asks "do we have memos about X?" or "what have we decided re: Y?", when keyword `/memo-query <word>` returned too few hits (titles + summaries are keyword-indexed but bodies are not), when the current task or plan context suggests prior COO decisions may be relevant, or when `/memo-query --semantic "<query>"` is invoked. Returns memo IDs + line ranges; the caller reads full text from `coo/memos.md` via the printed `sed` command. Don't rely on keyword `/memo-query` alone — it has an ~88% body-miss rate on concept queries (see MEMO 2026-04-24-05).
 ---
 
 # memo-search — natural-language retrieval over the memo archive
@@ -39,7 +39,7 @@ and one-line summaries from `memo_index.json`. On a real query,
 that misses most hits: the 2026-04-24 probe found 8 references to
 "skill" across memo bodies, only 1 of which surfaced through the
 title/summary index. The pointer layer closes that gap. MEMO
-2026-04-24-04 has the rationale and the research trail.
+2026-04-24-05 has the rationale and the research trail.
 
 ## Procedure
 
