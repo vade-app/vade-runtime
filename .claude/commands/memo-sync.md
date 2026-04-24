@@ -37,6 +37,6 @@ Follow the **memo-sync** skill to reconcile Mem0 with the current `coo/memo_inde
 ### Critical constraints
 
 - **`infer: false` on every add.** If the MCP tool rejects the parameter, stop — do NOT silently fall back to inferred ingestion. The whole semantic layer depends on a 1:1 mapping between memos and Mem0 records; default inference breaks that silently. SOP-MEM-001 §3 has the rationale.
-- **Mem0 MCP unreachable:** print the error, state that the semantic layer is out of sync, stop. Do not retry in a loop; auth failures and platform 503s want the user's attention, not silent retries.
+- **Mem0 MCP unreachable:** if `$MEM0_API_KEY` is set, fall back to the REST path — `bash /home/user/vade-runtime/scripts/mem0-rest.sh {ping,list-memo-pointers,add-memo-pointer,delete-memory}` — same Platform via REST, same result. Otherwise print the error, state that the semantic layer is out of sync, stop. See the memo-sync skill's "REST fallback" section for the exact call shapes.
 
-See the `memo-sync` skill body for edge cases (duplicate records, index/markdown drift).
+See the `memo-sync` skill body for edge cases (duplicate records, index/markdown drift) and the full REST fallback contract.

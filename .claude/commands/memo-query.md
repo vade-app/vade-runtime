@@ -18,6 +18,6 @@ Dispatch on `$ARGUMENTS`:
 5. Wrap the rendered output in a single fenced code block preceded by a header line in this shape:
    `=== N memos semantically matching "<query>" ===`
 6. If a memo the user wants is in the results, offer to run its printed `sed -n <line_start>,<line_end>p coo/memos.md` to display the full body — don't dump bodies proactively.
-7. If zero hits: the layer is probably stale. Suggest `/memo-sync` and say so plainly; don't fabricate matches. If Mem0 MCP is unreachable (auth failure, 503), report the error and suggest `/memo-query <keyword>` as the bash-only fallback.
+7. If zero hits: the layer is probably stale. Suggest `/memo-sync` and say so plainly; don't fabricate matches. If Mem0 MCP is unreachable (auth failure, 503 "DNS cache overflow"), check for `$MEM0_API_KEY` in env and fall back to `bash /home/user/vade-runtime/scripts/mem0-rest.sh search-memo-pointers "<query>"` — same Platform through REST; collect memo_ids from the response and render via `--render-ids` identically. If no key either, report plainly and suggest `/memo-query <keyword>` as the bash-only fallback.
 
 **Otherwise (memo-id / keyword / date-range / --render-ids / empty), present the bash output above verbatim to the user inside a single fenced code block.** Add no preamble, no summary, no commentary. If the output includes a `body: sed -n ...` line and the user clearly wants the full memo text, offer to run the printed `sed` command — don't run it automatically.
