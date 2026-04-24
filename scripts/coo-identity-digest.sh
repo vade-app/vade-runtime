@@ -310,10 +310,9 @@ if [ -n "${GITHUB_MCP_PAT:-}" ]; then
 else
   printf "  %-25s %s\n" "gh auth token:" "GITHUB_MCP_PAT unset — /resume or check coo-bootstrap"
 fi
-echo "  MCP posture:              github-coo MCP preferred for attributable writes."
-echo "                            On 'Streamable HTTP error: DNS cache overflow',"
-echo "                            fall back to: GH_TOKEN=\$GITHUB_MCP_PAT gh <cmd>."
-echo "                            Same token, vade-coo identity (MEMO 2026-04-23-02)."
+echo "  gh write path:            GH_TOKEN=\$GITHUB_MCP_PAT gh <cmd>  (attributes as vade-coo)."
+echo "                            Harness github MCP is NOT for attributable writes —"
+echo "                            resolves inconsistently. See CLAUDE.md, MEMO 2026-04-24-08."
 echo "───────────────────────────────────────────────────────────────"
 
 # Integrity check summary — the authoritative "did this session's boot
