@@ -131,20 +131,71 @@ Always report, even when idle — the point is to confirm currency.
 ## Failure modes
 
 - **Mem0 MCP unreachable** (auth failure, 503, DNS cache overflow
-  mid-session). Print the underlying error, state that the
-  semantic layer is now out-of-date relative to the index, and
-  stop. Do not retry silently; the failure is either transient
-  Platform unavailability or structural (expired auth). Both
-  want the user's attention, not a silent retry loop.
+  mid-session). This is a regularly observed failure: the Mem0 MCP
+  client does OAuth discovery once at session init and disables the
+  server for the rest of the session if it hits a transient 503 on
+  `mcp.mem0.ai/.well-known/oauth-authorization-server` (Cloudflare
+  edge DNS-cache-overflow; diagnosis of 2026-04-24). Claude Code on
+  the web has no `/mcp` re-init. When this happens:
+  1. First check whether `$MEM0_API_KEY` is in env. If yes, fall
+     back to the REST transport below — it talks to the same Mem0
+     Platform through a different wire and the pointer writes are
+     indistinguishable from the MCP ones.
+  2. If no key, print the error, flag the semantic layer as
+     out-of-date, and stop. Do not retry the MCP in a loop.
 - **`infer` parameter rejected** by the MCP wrapper. Stop. Tell
   the user the wrapper version doesn't expose the flag we need,
-  and point them at SOP §3 for why falling back is not safe.
+  and point them at SOP §3 for why falling back to `infer=true`
+  silently is not safe.
 - **Index and `memos.md` disagree** (e.g., `memo-index.sh` just
   ran but the index still looks stale vs. the markdown). Bug
   upstream. Report line numbers of the disagreement; stop.
 - **More than one Mem0 record shares a `memo_id`.** Previous sync
   left duplicates. Keep the newest by `created_at`; delete the
   rest; proceed. Report the cleanup in step 5.
+
+## REST fallback — when the MCP transport is degraded
+
+`/home/user/vade-runtime/scripts/mem0-rest.sh` is the break-glass
+path. It uses `$MEM0_API_KEY` and calls Mem0 Platform's REST API
+directly, bypassing MCP entirely. Same Platform, same data —
+writes here are visible to MCP reads in a later session and vice
+versa. Prefer MCP when it's healthy; use REST only when MCP is
+down *and* the key is set.
+
+Equivalent calls:
+
+- **List pointer records** (equivalent to step 2 above):
+  ```bash
+  bash /home/user/vade-runtime/scripts/mem0-rest.sh list-memo-pointers
+  ```
+  Returns a JSON array. Extract `id` and `metadata.memo_id` from each.
+
+- **Add** (step 4 ADD):
+  ```bash
+  bash /home/user/vade-runtime/scripts/mem0-rest.sh add-memo-pointer \
+    <memo_id> <line_start> <line_end> <date> <status> \
+    <supersedes|null> "<title>. <summary_one_line>" [run_id]
+  ```
+  Pass `null` literally for `supersedes` when the index entry has
+  no supersession. The script hard-codes `infer=false` and fills
+  in the standard metadata (`created_by`, `retention`,
+  `source_session`).
+
+- **Delete** (step 4 DELETE):
+  ```bash
+  bash /home/user/vade-runtime/scripts/mem0-rest.sh delete-memory <mem0_id>
+  ```
+
+- **Ping / auth check**:
+  ```bash
+  bash /home/user/vade-runtime/scripts/mem0-rest.sh ping
+  ```
+  Confirms the key is valid before running a full sync.
+
+Report output is the same shape regardless of which transport was
+used — the caller shouldn't need to care which path was taken, only
+that it should prefer MCP and fall back to REST when needed.
 
 ## Canonical source
 
