@@ -65,12 +65,63 @@ render_entries() {
   '
 }
 
+# Semantic form: --semantic <query>
+# Semantic search requires the Mem0 MCP; bash cannot invoke MCP tools.
+# The slash command markdown (/memo-query) owns the semantic dispatch —
+# when it sees --semantic, it skips bash output and does the MCP work
+# directly. We exit silently here so the eager `!bash` expansion in the
+# command file doesn't emit stray keyword-match output for semantic args.
+if [[ "$raw" =~ ^--semantic($|[[:space:]]|=) ]]; then
+  exit 0
+fi
+
 if [ -z "$raw" ]; then
   echo "=== 10 most recent memos (from $(basename "$INDEX")) ==="
   echo
   jq '.[:10]' "$INDEX" | render_entries
   echo
   echo "Tip: /memo-query <id>  |  /memo-query <keyword>  |  /memo-query YYYY-MM-DD..YYYY-MM-DD"
+  exit 0
+fi
+
+# Render-ids form: --render-ids <csv>
+# Takes a comma-separated list of memo IDs and renders matching index
+# entries using the same template as other modes. Callers (e.g. the
+# memo-search skill, which pulls ids from Mem0 semantic search) use
+# this to keep output shape consistent across all query modes.
+# Order is preserved from the input list — if the caller's ranking
+# matters (Mem0 rank), the list order is what gets printed.
+if [[ "$raw" =~ ^--render-ids($|[[:space:]]|=) ]]; then
+  ids_raw="${raw#--render-ids}"
+  # Strip the leading space-or-equals separator, then trim.
+  ids_raw="${ids_raw# }"
+  ids_raw="${ids_raw#=}"
+  ids_raw="${ids_raw#"${ids_raw%%[![:space:]]*}"}"
+  ids_raw="${ids_raw%"${ids_raw##*[![:space:]]}"}"
+  if [ -z "$ids_raw" ]; then
+    echo "memo-query: --render-ids requires a comma-separated memo-id list" >&2
+    exit 2
+  fi
+  # Convert "a,b,c" → JSON array, trimming whitespace per element.
+  ids_json=$(printf '%s' "$ids_raw" | jq -R '
+    split(",") | map(sub("^\\s+"; "") | sub("\\s+$"; "")) | map(select(length > 0))
+  ')
+  # For each id, collect all matching entries from the index (there
+  # are known duplicate ids — same id, different line_start — and the
+  # caller wants to see every physical memo). Preserve caller order.
+  matches=$(jq --argjson ids "$ids_json" '
+    . as $idx |
+    $ids | map(. as $id | $idx | map(select(.id == $id))) | add // []
+  ' "$INDEX")
+  count=$(jq 'length' <<<"$matches")
+  if [ "$count" -eq 0 ]; then
+    echo "memo-query: no matching entries in $(basename "$INDEX") for ids: $ids_raw"
+    exit 0
+  fi
+  # No header here — the semantic-search caller wraps with its own
+  # header so it can cite the NL query. Callers that want a header
+  # can prepend their own.
+  render_entries <<<"$matches"
   exit 0
 fi
 
