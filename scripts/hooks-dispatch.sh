@@ -136,4 +136,4 @@ _log "$RESOLVED_RULE" "$RESOLVED_RUNTIME" "true" "dispatching to $RESOLVED_SCRIP
 # Forward. Use `bash` explicitly (matches settings.json convention) and
 # pass through additional args. Don't use exec — we want the logged
 # dispatch line even if the hook crashes.
-bash "$RESOLVED_SCRIPT" "${HOOK_ARGS[@]}"
+bash "$RESOLVED_SCRIPT" ${HOOK_ARGS[@]+"${HOOK_ARGS[@]}"}
