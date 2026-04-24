@@ -264,6 +264,164 @@ _add E2 skip "requires-agent: call mcp__github-coo__get_me"
 _add E3 skip "requires-agent: inspect mcp-needs-auth-cache.json"
 _add E4 skip "requires-agent: observe tool namespaces"
 
+# ── Group F: Culture-system substrate discipline ─────────────
+# Implements E1–E4 from coo/foundations/2026-04-22_we-can-claim-a-record.md
+# §5d (label delta: the essay calls these E1–E4; Group E is occupied by
+# live MCP-surface probes, so the script reserves F). Adopted by
+# SOP-CULTURE-001 and MEMO 2026-04-24-12. Non-fatal on every path.
+#
+# F_CUTOFF is the adoption moment from which the invariants bind.
+# Artifacts dated earlier are pre-adoption and pass by construction.
+# Bumping the cutoff requires a memo retiring or superseding MEMO
+# 2026-04-24-12's §F_CUTOFF clause.
+#
+# Time-precise rather than date-precise because 2026-04-24 contained
+# one Ven-authored commit (418f0a4, PR #94) an hour before the first
+# decision-bearing commit of the day; an "adoption moment" captures
+# the adoption boundary cleanly without retroactively flagging a
+# legitimate pre-adoption attribution.
+F_CUTOFF="2026-04-24"          # date form — used for F2 memo-index, F3 essay-filename comparisons
+F_CUTOFF_GIT="2026-04-24 12:00:00 +0000"  # timestamp form — used for F1/F4 git log --since
+
+# Resolve the vade-coo-memory repo path. Mirrors memo-index.sh and
+# commission-retrospective.sh — the canonical order is env override,
+# macOS per-user checkout, cloud default.
+if [ -n "${COO_MEMORY_DIR:-}" ]; then
+  F_REPO="$COO_MEMORY_DIR"
+elif [ "$HOME" != "/home/user" ] && [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then
+  F_REPO="$HOME/GitHub/vade-app/vade-coo-memory"
+else
+  F_REPO="/home/user/vade-coo-memory"
+fi
+
+# ── F1 — PR citation invariant ───────────────────────────────
+# Every commit since F_CUTOFF touching coo/, identity/, context/, or
+# CLAUDE.md (excluding _drafts/, _archive/, retrospectives/, and the
+# foundations/*_transcript.md pattern) must cite MEMO YYYY-MM-DD-NN
+# or #NNN in its message body. Diff mentions do not count.
+if [ -d "$F_REPO/.git" ] && check_cmd git; then
+  f1_total=0
+  f1_bad=()
+  # List commit SHAs touching F1 scope since F_CUTOFF; body inspection
+  # happens per-commit. --name-only with --format gives sha-then-paths.
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    # Paths this commit touched that are in scope.
+    touched=$(git -C "$F_REPO" show --name-only --format= "$sha" 2>/dev/null \
+      | grep -E '^(coo/|identity/|context/|CLAUDE\.md$)' \
+      | grep -vE '^coo/_drafts/|^coo/_archive/|^coo/retrospectives/|^coo/foundations/.*_transcript\.md$' \
+      || true)
+    [ -n "$touched" ] || continue
+    f1_total=$((f1_total + 1))
+    body=$(git -C "$F_REPO" log -1 --format='%B' "$sha" 2>/dev/null || echo '')
+    if ! printf '%s' "$body" | grep -qE 'MEMO [0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]+|#[0-9]+'; then
+      f1_bad+=("${sha:0:10}")
+    fi
+  done < <(git -C "$F_REPO" log --since="$F_CUTOFF_GIT" --format='%H' 2>/dev/null)
+
+  if [ "$f1_total" -eq 0 ]; then
+    _add F1 true "no decision-bearing commits since $F_CUTOFF_GIT (nothing to check)"
+  elif [ "${#f1_bad[@]}" -eq 0 ]; then
+    _add F1 true "$f1_total/$f1_total decision-bearing commits since $F_CUTOFF_GIT cite memo or issue"
+  else
+    _add F1 false "${#f1_bad[@]}/$f1_total commits missing citation: $(IFS=,; echo "${f1_bad[*]}")"
+  fi
+else
+  _add F1 skip "requires coo-memory repo at $F_REPO with .git"
+fi
+
+# ── F2 — Memo retirement invariant ───────────────────────────
+# Every memo with date >= F_CUTOFF in coo/memo_index.json must carry a
+# 'Retirement condition' clause or `retention: "permanent"` in its body
+# slice of coo/memos.md. Absence = case-law violation per memo_protocol.md.
+if [ -f "$F_REPO/coo/memo_index.json" ] && [ -f "$F_REPO/coo/memos.md" ] && check_cmd jq; then
+  f2_total=0
+  f2_bad=()
+  while IFS='|' read -r id ls le; do
+    [ -n "$id" ] || continue
+    f2_total=$((f2_total + 1))
+    block=$(sed -n "${ls},${le}p" "$F_REPO/coo/memos.md" 2>/dev/null || echo '')
+    if ! printf '%s' "$block" | grep -qE 'Retirement condition|retention: "permanent"'; then
+      f2_bad+=("$id")
+    fi
+  done < <(jq -r --arg c "$F_CUTOFF" '.[] | select(.date >= $c) | "\(.id)|\(.line_start)|\(.line_end)"' "$F_REPO/coo/memo_index.json" 2>/dev/null)
+
+  if [ "$f2_total" -eq 0 ]; then
+    _add F2 true "no post-cutoff memos to check"
+  elif [ "${#f2_bad[@]}" -eq 0 ]; then
+    _add F2 true "$f2_total/$f2_total post-cutoff memos carry retirement clause"
+  else
+    _add F2 false "missing retirement clause: $(IFS=,; echo "${f2_bad[*]}")"
+  fi
+else
+  _add F2 skip "requires memo_index.json, memos.md, and jq"
+fi
+
+# ── F3 — Essay companion invariant ───────────────────────────
+# Every coo/foundations/YYYY-MM-DD_*.md dated since F_CUTOFF (excluding
+# _transcript and _agent-reports files) must have a matching
+# YYYY-MM-DD_transcript.md companion in the same directory.
+if [ -d "$F_REPO/coo/foundations" ]; then
+  f3_total=0
+  f3_bad=()
+  while IFS= read -r essay; do
+    [ -n "$essay" ] || continue
+    essay_date="${essay:0:10}"
+    # String comparison on ISO dates is safe; bash [[ ]] supports it.
+    [ "$essay_date" \< "$F_CUTOFF" ] && continue
+    case "$essay" in
+      *_transcript.md|*_agent-reports*) continue ;;
+    esac
+    f3_total=$((f3_total + 1))
+    if [ ! -f "$F_REPO/coo/foundations/${essay_date}_transcript.md" ]; then
+      f3_bad+=("$essay")
+    fi
+  done < <(ls -1 "$F_REPO/coo/foundations/" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_')
+
+  if [ "$f3_total" -eq 0 ]; then
+    _add F3 true "no post-cutoff essays to check"
+  elif [ "${#f3_bad[@]}" -eq 0 ]; then
+    _add F3 true "$f3_total/$f3_total post-cutoff essays have transcript companion"
+  else
+    _add F3 false "missing transcript for: $(IFS=,; echo "${f3_bad[*]}")"
+  fi
+else
+  _add F3 skip "no coo/foundations directory at $F_REPO"
+fi
+
+# ── F4 — Attribution coverage ────────────────────────────────
+# Every commit since F_CUTOFF in $F_REPO must resolve to vade-coo
+# (author email coo@vade-app.dev) or carry 'ven-human-action:' in body.
+# Silent venpopov-authored commits on coo-scope paths are F4-relevant.
+if [ -d "$F_REPO/.git" ] && check_cmd git; then
+  f4_total=0
+  f4_bad=()
+  while IFS='|' read -r sha email body; do
+    # Skip blank records: awk's RS="\0" parser emits one on the trailing
+    # null terminator, and trimmed SHA-less lines can slip through mid-stream.
+    [ -n "$sha" ] || continue
+    case "$sha" in *[!0-9a-f]*) continue ;; esac
+    f4_total=$((f4_total + 1))
+    if [ "$email" = "coo@vade-app.dev" ]; then
+      continue
+    fi
+    if printf '%s' "$body" | grep -q 'ven-human-action:'; then
+      continue
+    fi
+    f4_bad+=("${sha:0:10}($email)")
+  done < <(git -C "$F_REPO" log --since="$F_CUTOFF_GIT" --format='%H|%ae|%B%x00' 2>/dev/null | awk 'BEGIN{RS="\0"} { sub(/^\n/, ""); if (NF) { gsub(/\n/,"\\n"); print } }')
+
+  if [ "$f4_total" -eq 0 ]; then
+    _add F4 true "no commits since $F_CUTOFF_GIT (nothing to check)"
+  elif [ "${#f4_bad[@]}" -eq 0 ]; then
+    _add F4 true "$f4_total/$f4_total commits resolve to vade-coo or carry ven-human-action"
+  else
+    _add F4 false "${#f4_bad[@]}/$f4_total attribution mismatches: $(IFS=,; echo "${f4_bad[*]}")"
+  fi
+else
+  _add F4 skip "requires coo-memory repo at $F_REPO with .git"
+fi
+
 # ── Serialize ────────────────────────────────────────────────
 mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || true
 
