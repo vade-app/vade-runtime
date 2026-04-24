@@ -14,7 +14,7 @@ Follow the **memo-sync** skill to reconcile Mem0 with the current `coo/memo_inde
 2. Fetch current pointer records: call `mcp__mem0__search_memories` with an empty query and filter
    `{AND: [{user_id: "ven"}, {metadata: {created_by: "coo"}}, {metadata: {memory_type: "memo_pointer"}}]}`,
    `top_k: 100`.
-3. Build a map `{memo_id → [mem0_id, metadata]}` from the results. Any `memo_id` with more than one record is a previous-sync bug: keep the newest by `created_at`, plan to delete the rest.
+3. Build a map `{memo_id → {mem0_id, metadata}}` from the results. `memo_id` is the primary key (mem0_sop.md §2g; `memo-index.sh` enforces uniqueness in the source). Any `memo_id` returning more than one record is a previous-sync or 503-retry duplicate: keep the one whose `(line_start, line_end)` match the index entry, plan to delete the rest.
 4. Diff by `memo_id`:
    - entry in index but **not** in Mem0 → **ADD**
    - entry in Mem0 with `line_start` / `line_end` / `title` / `status` differing from the index → **REPLACE** (delete the old record first, then add — SOP-MEM-001 §3 forbids bare re-add)

@@ -69,9 +69,11 @@ only:
 - `top_k`: ≥100 (a ceiling large enough to return every pointer;
   the corpus is ~45 memos today).
 
-Build a map `{memo_id → [{mem0_id, metadata}, ...]}` from the
-results. Any memo_id with more than one record is a sync bug from
-a previous run — handle per §Failure modes below.
+Build a map `{memo_id → {mem0_id, metadata}}` from the results.
+`memo_id` is the primary key (mem0_sop.md §2g, enforced by the
+`memo-index.sh` duplicate check). Any memo_id returning more than
+one record is a sync bug from a previous run — handle per
+§Failure modes below.
 
 ### 3. Diff
 
@@ -150,9 +152,17 @@ Always report, even when idle — the point is to confirm currency.
 - **Index and `memos.md` disagree** (e.g., `memo-index.sh` just
   ran but the index still looks stale vs. the markdown). Bug
   upstream. Report line numbers of the disagreement; stop.
-- **More than one Mem0 record shares a `memo_id`.** Previous sync
-  left duplicates. Keep the newest by `created_at`; delete the
-  rest; proceed. Report the cleanup in step 5.
+- **More than one Mem0 record shares a `memo_id`.** Either a
+  previous sync left duplicates, or a Cloudflare-edge 503 retry
+  double-added (the 2026-04-24 failure mode: edge returns 503
+  *after* the Mem0 backend has already committed the write, so a
+  naive retry creates a second record). The `memo-index.sh`
+  fail-loud check rules out duplicate-index-entry as a cause.
+  Keep the record whose `(line_start, line_end)` match the index
+  entry; delete the rest; proceed. Report the cleanup in step 5.
+- **Duplicate memo IDs in `memos.md`.** Should be impossible —
+  `memo-index.sh` exits non-zero before this skill runs. If it
+  happens anyway, stop and report; do not try to sync around it.
 
 ## REST fallback — when the MCP transport is degraded
 

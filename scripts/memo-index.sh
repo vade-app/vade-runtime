@@ -16,9 +16,11 @@
 #    superseded_by, linked_issues, summary_one_line,
 #    line_start, line_end}
 #
-# Note: the corpus contains duplicate memo IDs (three pairs as of
-# 2026-04-24), so the index must be a JSON *array*, not an object
-# keyed by id. line_start disambiguates duplicates.
+# memo_id is the primary key (per mem0_sop.md §2g). Duplicate IDs
+# in memos.md are a protocol violation and fail the build: the
+# downstream Mem0 memo_pointer layer and the memo-sync skill both
+# key on memo_id, and silent duplicates orphan entries in the
+# semantic layer. Fix the source, not the index.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -156,10 +158,23 @@ for i in "${!headers[@]}"; do
     }' >> "$entries_file"
 done
 
+# Fail loud on duplicate memo IDs. memo_id is the primary key for
+# the downstream Mem0 memo_pointer layer (mem0_sop.md §2g); silent
+# duplicates orphan entries in the semantic layer. If this trips,
+# fix memos.md — do not paper over it in the index.
+dup_ids=$(jq -sr 'group_by(.id) | map(select(length>1)) | .[][0].id' "$entries_file")
+if [ -n "$dup_ids" ]; then
+  echo "[vade-setup] memo-index: FATAL: duplicate memo IDs found in $MEMOS:" >&2
+  while IFS= read -r dup_id; do
+    echo "  $dup_id:" >&2
+    grep -n "^## MEMO $dup_id " "$MEMOS" | sed 's/^/    L/' >&2
+  done <<< "$dup_ids"
+  echo "[vade-setup] memo-index: renumber the later occurrence (convention: append to end of day's -NN sequence). See coo/memo_protocol.md." >&2
+  exit 1
+fi
+
 # Merge entries into an array, compute superseded_by by inverting
 # supersedes_refs across the corpus, and sort newest-first.
-# Tie-break on line_start so duplicate-id pairs have stable order
-# (later-in-file wins, matching chronological intuition).
 generated=$(
   jq -s '
     . as $all |
@@ -167,7 +182,7 @@ generated=$(
       . as $m |
       .superseded_by = ([$all[] | select(.supersedes_refs | index($m.id)) | .id] | unique)
     ) |
-    sort_by([.id, .line_start]) |
+    sort_by(.id) |
     reverse
   ' "$entries_file"
 )
