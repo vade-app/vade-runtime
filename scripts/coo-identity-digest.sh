@@ -300,6 +300,62 @@ echo "                            fall back to: GH_TOKEN=\$GITHUB_MCP_PAT gh <cm
 echo "                            Same token, vade-coo identity (MEMO 2026-04-23-02)."
 echo "───────────────────────────────────────────────────────────────"
 
+# Integrity check summary — the authoritative "did this session's boot
+# pipeline land correctly" verdict. session-start-sync.sh writes this
+# to $VADE_CLOUD_STATE_DIR/integrity-check.json on every boot. The file
+# itself is already read-on-demand by CLAUDE.md §14; this block echoes
+# the summary inline so routine-triggered sessions (non-startup matcher)
+# and automation instances see the posture without having to cat the
+# file themselves. Quorum-automation context: without this, routine
+# instances operated with less situational awareness than interactive
+# COO sessions (observed during quorum #3, PR #90).
+INTEGRITY_CHECK="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
+echo ""
+echo "───────────────────────────────────────────────────────────────"
+echo "Integrity check"
+echo "───────────────────────────────────────────────────────────────"
+if [ -f "$INTEGRITY_CHECK" ] && check_cmd node; then
+  node -e '
+    const fs = require("fs");
+    try {
+      const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const s = r.summary || {};
+      const ok = s.ok === true;
+      const passed = s.passed ?? "?";
+      const total = s.total ?? "?";
+      const degraded = Array.isArray(s.degraded) ? s.degraded : [];
+      console.log("  summary.ok:      " + (ok ? "true" : "false"));
+      console.log("  passed:          " + passed + "/" + total);
+      if (degraded.length > 0) {
+        console.log("  degraded:        " + degraded.join(", "));
+        console.log("");
+        console.log("  Failing invariants — see groups.<A-E>.<id>.detail in the file:");
+        for (const id of degraded) {
+          const grp = id[0];
+          const entry = (r.groups || {})[grp]?.[id];
+          const detail = entry?.detail || "(no detail)";
+          console.log("    " + id + ": " + detail);
+        }
+      }
+      if (!ok) {
+        console.log("");
+        console.log("  If any invariant is a known false-negative (e.g. B3/D3 per");
+        console.log("  MEMO 2026-04-23-03), cite the memo before acting. Otherwise");
+        console.log("  investigate before touching attributable surfaces.");
+      }
+      console.log("  File:            " + process.argv[1]);
+    } catch (e) {
+      console.log("  (unreadable: " + e.message + ")");
+    }
+  ' "$INTEGRITY_CHECK" 2>/dev/null || cat "$INTEGRITY_CHECK"
+elif [ -f "$INTEGRITY_CHECK" ]; then
+  echo "  node not available; raw file at $INTEGRITY_CHECK"
+else
+  echo "  (no integrity check at $INTEGRITY_CHECK)"
+  echo "  session-start-sync.sh did not run or did not write the receipt."
+fi
+echo "───────────────────────────────────────────────────────────────"
+
 # Cloud build-time receipt — what did cloud-setup.sh actually do at
 # snapshot build? Present = build ran; missing = build skipped or the
 # setup script field in the Anthropic cloud UI is not wired.
