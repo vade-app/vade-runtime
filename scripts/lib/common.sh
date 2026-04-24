@@ -708,7 +708,7 @@ ensure_gh_symlink_on_path() {
 # read failed.
 fetch_coo_secrets() {
   log "Fetching COO secrets from 1Password vault COO"
-  local github_pat="" agentmail_key=""
+  local github_pat="" agentmail_key="" mem0_key=""
   local got=0
 
   if github_pat="$(retry 3 op read 'op://COO/vade-coo-self-2026-04/credential')" && [ -n "$github_pat" ]; then
@@ -727,6 +727,14 @@ fetch_coo_secrets() {
     log "  WARN: op://COO/agentmail-vade-coo/credential unavailable; AGENTMAIL_API_KEY will be unset"
   fi
 
+  if mem0_key="$(retry 3 op read 'op://COO/mem0-vade-coo/credential')" && [ -n "$mem0_key" ]; then
+    log "  read Mem0 API key (len=${#mem0_key})"
+    got=$((got+1))
+  else
+    mem0_key=""
+    log "  WARN: op://COO/mem0-vade-coo/credential unavailable; MEM0_API_KEY will be unset (mem0-rest.sh break-glass path disabled)"
+  fi
+
   if [ "$got" -eq 0 ]; then
     log "  no COO secrets could be fetched; skipping env file write"
     return 1
@@ -741,15 +749,17 @@ fetch_coo_secrets() {
       [ -n "$github_pat" ]    && echo "export GITHUB_MCP_PAT='$github_pat'"
       [ -n "$github_pat" ]    && echo "export GITHUB_TOKEN='$github_pat'"
       [ -n "$agentmail_key" ] && echo "export AGENTMAIL_API_KEY='$agentmail_key'"
+      [ -n "$mem0_key" ]      && echo "export MEM0_API_KEY='$mem0_key'"
     } > "$env_file"
   )
   chmod 600 "$env_file"
   log "  wrote $env_file (0600)"
 
-  _write_claude_settings_env "$github_pat" "$agentmail_key"
+  _write_claude_settings_env "$github_pat" "$agentmail_key" "$mem0_key"
 
   [ -n "$github_pat" ]    && export GITHUB_MCP_PAT="$github_pat" GITHUB_TOKEN="$github_pat"
   [ -n "$agentmail_key" ] && export AGENTMAIL_API_KEY="$agentmail_key"
+  [ -n "$mem0_key" ]      && export MEM0_API_KEY="$mem0_key"
   return 0
 }
 
@@ -766,7 +776,7 @@ fetch_coo_secrets() {
 # Both are only exported when the corresponding filesystem path
 # exists, so this is a no-op outside the Claude cloud image.
 _write_claude_settings_env() {
-  local pat="$1" agentmail="$2"
+  local pat="$1" agentmail="$2" mem0="$3"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json env merge"
     return 0
@@ -781,7 +791,7 @@ _write_claude_settings_env() {
   local pw_browsers=""
   [ -d "/opt/pw-browsers" ] && pw_browsers="/opt/pw-browsers"
 
-  GITHUB_MCP_PAT="$pat" AGENTMAIL_API_KEY="$agentmail" \
+  GITHUB_MCP_PAT="$pat" AGENTMAIL_API_KEY="$agentmail" MEM0_API_KEY="$mem0" \
   NODE_PATH="$node_path" PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" node -e '
     const fs = require("fs");
     const path = process.argv[1];
@@ -798,6 +808,9 @@ _write_claude_settings_env() {
     }
     if (process.env.AGENTMAIL_API_KEY) {
       merged.AGENTMAIL_API_KEY = process.env.AGENTMAIL_API_KEY;
+    }
+    if (process.env.MEM0_API_KEY) {
+      merged.MEM0_API_KEY = process.env.MEM0_API_KEY;
     }
     if (process.env.NODE_PATH) {
       merged.NODE_PATH = process.env.NODE_PATH;

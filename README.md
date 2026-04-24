@@ -134,12 +134,13 @@ no-op and the cloud env comes up in plain VADE mode.
 ### 1Password vault contract
 
 The service account must have **read** access to a vault named `COO`
-containing four items:
+containing five items:
 
 | Item reference | Type | What it holds |
 |---|---|---|
 | `op://COO/vade-coo-self-2026-04` | API Credential | GitHub fine-grained PAT (`credential` field) |
 | `op://COO/agentmail-vade-coo` | API Credential | AgentMail API key (`credential` field) |
+| `op://COO/mem0-vade-coo` | API Credential | Mem0 Platform API key (`credential` field; prefix `m0-`) — powers the `mem0-rest.sh` break-glass fallback when the Mem0 MCP OAuth transport is degraded |
 | `op://COO/vade-coo-auth` | SSH Key | GitHub auth key (`ed25519`) |
 | `op://COO/vade-coo-sign` | SSH Key | GitHub signing key (`ed25519`) |
 
