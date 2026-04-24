@@ -110,16 +110,44 @@ pointer is what matters.
 ## Failure modes
 
 - **Mem0 MCP unreachable** (auth expired, 503, DNS cache overflow).
-  Report the error plainly. Fall back to suggesting
-  `/memo-query <keyword>` — id/keyword/date-range modes are
-  bash-only and keep working without Mem0. Don't attempt to
-  simulate semantic search against the markdown; it will mislead.
+  Observed regularly: the Mem0 MCP client does OAuth discovery once
+  at session init and disables the server for the rest of the session
+  if it hits a transient 503 on `mcp.mem0.ai/.well-known/oauth-authorization-server`
+  (Cloudflare edge DNS-cache-overflow; diagnosed 2026-04-24). If
+  `$MEM0_API_KEY` is set, fall back to the REST transport below.
+  Otherwise, report the error plainly and fall back to suggesting
+  `/memo-query <keyword>` — id/keyword/date-range modes are bash-only
+  and keep working without Mem0. Don't attempt to simulate semantic
+  search against the markdown; it will mislead.
 - **Zero hits despite a query that should match.** Likely stale
   layer. Suggest `/memo-sync`. Optionally re-run semantic search
   after the sync completes.
 - **`--render-ids` not implemented in `memo-query.sh`.** This
   skill requires the `--render-ids <csv>` mode. If bash errors on
   that flag, the runtime has drifted — report and stop.
+
+## REST fallback — when the MCP transport is degraded
+
+`/home/user/vade-runtime/scripts/mem0-rest.sh` exposes the same
+Mem0 Platform via `$MEM0_API_KEY` instead of OAuth/MCP. Use it
+only when `mcp__mem0__search_memories` isn't available this
+session; the results are identical (same Platform, different wire).
+
+```bash
+bash /home/user/vade-runtime/scripts/mem0-rest.sh \
+     search-memo-pointers "<query>" [top_k=10]
+```
+
+Returns Mem0's JSON response. Pipe through `jq -r '.[] | .metadata.memo_id'`
+(or whatever the response shape turns out to be — the script passes
+the body through unchanged) to collect memo_ids, then render via
+`bash memo-query.sh "--render-ids <csv>"` exactly as in the MCP
+path. The output format is identical to the caller.
+
+If `$MEM0_API_KEY` is missing, the script exits with a clear
+message pointing at how to set it. Don't substitute in ad-hoc
+keyword search when the key is missing — say so, and suggest
+`/memo-query <keyword>` as the legitimate bash-only fallback.
 
 ## Canonical source
 
