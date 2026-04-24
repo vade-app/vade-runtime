@@ -171,7 +171,7 @@ case "$cmd" in
       --argjson supersedes "$sup_arg" \
       --arg run_id "$run_id" \
       '{
-        messages: [{role: "system", content: $text}],
+        messages: [{role: "user", content: $text}],
         user_id: "ven",
         infer: false,
         metadata: {
