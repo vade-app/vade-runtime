@@ -152,6 +152,28 @@ Fingerprints validated at boot:
 Mismatch = boot fails. Rotate keys → update fingerprints in
 `scripts/lib/common.sh` (`COO_AUTH_FP_EXPECTED`, `COO_SIGN_FP_EXPECTED`).
 
+### Push fallback for the cloud git proxy
+
+The Claude Code cloud sandbox routes git through a local proxy
+(`http://local_proxy@127.0.0.1:<port>/git/<owner>/<repo>`) that
+intermittently 403s on push and, separately, substitutes a token
+without `workflow` scope on workflow-file pushes
+(`vade-app/vade-runtime#67`).
+
+`scripts/git-push-with-fallback.sh` wraps `git push` and, on a
+proxy-class failure, retries once via
+`https://vade-coo:${GITHUB_MCP_PAT}@github.com/<owner>/<repo>.git`,
+preserving `vade-coo` attribution. Genuine failures (permission
+denied, bad refspec, network down) pass through untouched with
+the original exit status.
+
+```bash
+scripts/git-push-with-fallback.sh -u origin claude/my-branch
+```
+
+Requires `GITHUB_MCP_PAT` in env — populated by `coo-bootstrap.sh`
+at session start.
+
 ### Extending to other sub-agents
 
 The pattern is copyable. For a new agent (e.g., Night's Watch, PM
