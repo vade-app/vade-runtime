@@ -201,13 +201,21 @@ fi
 #   missing      — absent at both: COO identity dark until env is provisioned
 #   unknown      — no receipt to compare against (build-time setup didn't run)
 _op_build_seen="unknown"
+_op_installed_at_build="unknown"
 if [ -f "$SETUP_RECEIPT" ] && check_cmd node; then
-  _op_build_seen="$(node -e '
+  _op_receipt_probe="$(node -e '
     try {
       const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-      console.log(r.op_token_visible === true ? "yes" : "no");
-    } catch (_) { console.log("unknown"); }
-  ' "$SETUP_RECEIPT" 2>/dev/null || echo unknown)"
+      const tok = r.op_token_visible === true ? "yes" : "no";
+      let inst;
+      if (r.op_installed_at_build === true) inst = "yes";
+      else if (r.op_installed_at_build === false) inst = "no";
+      else inst = "unknown";
+      console.log(tok + " " + inst);
+    } catch (_) { console.log("unknown unknown"); }
+  ' "$SETUP_RECEIPT" 2>/dev/null || echo "unknown unknown")"
+  _op_build_seen="${_op_receipt_probe%% *}"
+  _op_installed_at_build="${_op_receipt_probe##* }"
 fi
 _op_session_seen="no"
 [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && _op_session_seen="yes"
@@ -231,6 +239,25 @@ case "$_op_build_seen/$_op_session_seen" in
   unknown/*)
     ;;
 esac
+
+# Snapshot is degraded when build-time op-install failed (#77): the
+# whole point of cloud-setup.sh:ensure_op_cli is to take egress flake
+# off the SessionStart critical path. When it failed at build, the
+# binary is missing from /home/user/.local/bin and SessionStart's
+# bootstrap fallback has to re-fetch from cache.agilebits.com, which
+# is exposed to the same flake the build-time install was supposed
+# to absorb. Surface this loudly so the operator (or a future agent)
+# knows to expect the flake-on-resume failure mode and can /resume
+# rather than wedge.
+if [ "$_op_installed_at_build" = "no" ]; then
+  echo ""
+  echo "  ⚠ op CLI failed to install at build time (op_installed_at_build=false)."
+  echo "    Snapshot is degraded — SessionStart's bootstrap fallback will re-fetch"
+  echo "    op from cache.agilebits.com mid-session, which is exposed to the same"
+  echo "    egress flake the build-time install was supposed to absorb. If bootstrap"
+  echo "    dies at step=ensure_op_cli, /resume rather than wedge — the second"
+  echo "    attempt usually clears."
+fi
 
 echo "───────────────────────────────────────────────────────────────"
 
