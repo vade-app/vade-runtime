@@ -52,6 +52,14 @@ ensure_dirs
 # permissions, autoMemoryEnabled, etc.) stays untouched. Claude Code
 # still reads this config when launched with cwd under $WORKSPACE_ROOT.
 sync_claude_config "$WORKSPACE_ROOT/vade-runtime/.claude" "$WORKSPACE_ROOT/.claude"
+# Aggregate per-repo primitives (slash commands, agents, skills, hooks)
+# from data-owning repos into the workspace .claude/ via per-file
+# symlinks. Source order = priority; first-wins on name conflicts.
+# vade-runtime is listed first because plumbing (settings.json hooks,
+# tagging-taxonomy, agentmail) shouldn't lose to a same-named primitive
+# in a data repo.
+aggregate_workspace_claude_config "$WORKSPACE_ROOT" "$WORKSPACE_ROOT/.claude" \
+  vade-runtime vade-coo-memory vade-core
 # The synced settings.json's hook commands reference
 # $HOME/.claude/vade-hooks/dispatch.sh — those resolve at hook-fire time
 # against the user's real $HOME, not the project-scope .claude above.

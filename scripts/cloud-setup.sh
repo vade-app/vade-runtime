@@ -21,6 +21,13 @@ log "Baseline: node=$(node --version 2>/dev/null || echo 'missing') npm=$(npm --
 
 ensure_dirs
 sync_claude_config /home/user/vade-runtime/.claude
+# Aggregate per-repo primitives from data-owning repos into the
+# user-scope .claude/ via per-file symlinks. Per the data-ownership
+# rule (MEMO 2026-04-25-02), slash commands and skills live in the
+# repo whose data they manipulate; the aggregator surfaces them at
+# user-scope so they're invokable from any session cwd.
+aggregate_workspace_claude_config /home/user "$HOME/.claude" \
+  vade-runtime vade-coo-memory vade-core
 ensure_workspace_mcp_config
 ensure_workspace_identity_link
 

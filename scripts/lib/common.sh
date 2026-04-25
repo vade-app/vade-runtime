@@ -407,6 +407,78 @@ _sync_claude_subdir() {
   done
 }
 
+# Aggregate per-repo .claude/{commands,agents,skills,hooks} into the
+# workspace .claude/ via per-file symlinks.
+#
+# Why: under the data-ownership rule (MEMO 2026-04-25-02), slash
+# commands and skills live in the repo whose data they manipulate
+# (e.g. /memo-query in vade-coo-memory). For Ven to invoke them
+# regardless of which repo he launched Claude Code from, the workspace
+# .claude/ must surface every per-repo primitive in one place. This
+# function does that with per-file symlinks — Claude Code resolves the
+# symlink and finds the command in its source repo, no copy drift.
+#
+# Conflict policy: first-source-wins (sources are walked in arg order).
+# Conflicts are logged but don't fail. Real-file conflicts (a non-symlink
+# at the destination) are skipped to avoid clobbering harness built-ins.
+#
+# Usage: aggregate_workspace_claude_config <workspace_root> <dst_root> <repo1> [repo2] ...
+#   workspace_root  — directory containing the repo dirs (e.g. /home/user
+#                     on cloud, ~/GitHub/vade-app on local).
+#   dst_root        — where the aggregated .claude/ should land. On cloud
+#                     this is $HOME/.claude (user-scope); on local this is
+#                     $WORKSPACE_ROOT/.claude (project-scope).
+aggregate_workspace_claude_config() {
+  local workspace_root="$1"; shift
+  local dst_root="$1"; shift
+  mkdir -p "$dst_root"
+  local sub
+  for sub in commands agents skills hooks; do
+    local dst_sub="$dst_root/$sub"
+    # If dst is a symlink (legacy single-source layout), materialize it
+    # into a real directory so we can union multiple sources into it.
+    if [ -L "$dst_sub" ]; then
+      local prev_target; prev_target="$(readlink -f "$dst_sub" 2>/dev/null || true)"
+      rm "$dst_sub"
+      mkdir -p "$dst_sub"
+      if [ -n "$prev_target" ] && [ -d "$prev_target" ]; then
+        local prev_entry prev_name
+        for prev_entry in "$prev_target"/*; do
+          [ -e "$prev_entry" ] || continue
+          prev_name="$(basename "$prev_entry")"
+          ln -snf "$prev_entry" "$dst_sub/$prev_name"
+        done
+      fi
+    else
+      mkdir -p "$dst_sub"
+    fi
+    local repo src entry name target
+    for repo in "$@"; do
+      src="$workspace_root/$repo/.claude/$sub"
+      [ -d "$src" ] || continue
+      for entry in "$src"/*; do
+        [ -e "$entry" ] || continue
+        name="$(basename "$entry")"
+        target="$dst_sub/$name"
+        if [ -L "$target" ]; then
+          local cur; cur="$(readlink -f "$target" 2>/dev/null || true)"
+          local want; want="$(readlink -f "$entry" 2>/dev/null || true)"
+          [ "$cur" = "$want" ] && continue
+          # First-source-wins; later repo skipped with note.
+          log "  aggregate: $sub/$name conflict; keeping $cur, skipping $want"
+          continue
+        fi
+        if [ -e "$target" ] && [ ! -L "$target" ]; then
+          log "  warn: $target exists and is not a symlink; skipping"
+          continue
+        fi
+        ln -snf "$entry" "$target"
+      done
+    done
+  done
+  log "Aggregated workspace .claude/ from: $*"
+}
+
 _sync_claude_settings() {
   local src_file="$1" dst_file="$2"
   if [ -f "$dst_file" ] && check_cmd node; then
