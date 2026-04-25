@@ -81,7 +81,9 @@ print_versions
 # survives the snapshot → resume transition. Idempotent: if a prior
 # build already installed it, this is a no-op. Non-fatal: a failure
 # here just means the SessionStart hook will retry (same as before).
+OP_INSTALLED_AT_BUILD=false
 if ensure_op_cli; then
+  OP_INSTALLED_AT_BUILD=true
   build_log_record OK "cloud-setup: op CLI installed at build time"
 else
   build_log_record WARN "cloud-setup: op CLI install failed at build time; SessionStart hook will retry"
@@ -137,6 +139,7 @@ GIT_SHA="$(git -C /home/user/vade-runtime rev-parse --short HEAD 2>/dev/null || 
 build_receipt_write \
   built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   op_token_visible="$OP_TOKEN_VISIBLE" \
+  op_installed_at_build="$OP_INSTALLED_AT_BUILD" \
   coo_bootstrap_ran="$COO_BOOTSTRAP_RAN" \
   workspace_mcp_symlinked="$WORKSPACE_MCP_SYMLINKED" \
   identity_link_ok="$IDENTITY_LINK_OK" \
