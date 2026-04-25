@@ -32,6 +32,16 @@
     "allow": [
       "mcp__github-coo__*",
 
+      "mcp__mem0__get_memories",
+      "mcp__mem0__search_memories",
+      "mcp__mem0__add_memory",
+      "mcp__mem0__update_memory",
+      "mcp__mem0__delete_memory",
+      "mcp__mem0__get_memory",
+      "mcp__mem0__list_entities",
+      "mcp__mem0__list_events",
+      "mcp__mem0__get_event_status",
+
       "mcp__github__get_me",
       "mcp__github__get_file_contents",
       "mcp__github__get_commit",
