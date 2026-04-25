@@ -19,9 +19,14 @@ source "$SCRIPT_DIR/lib/common.sh"
 boot_log_record coo-identity-digest start
 trap '_rc=$?; boot_log_record coo-identity-digest end $([ $_rc -eq 0 ] && echo ok || echo fail) rc=$_rc' EXIT
 
+# Resolve workspace root: parent of vade-runtime. /home/user on cloud,
+# $WORKSPACE_ROOT on local.
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 if [ -n "${COO_MEMORY_DIR:-}" ]; then
   MEM_REPO="$COO_MEMORY_DIR"
-elif [ "$HOME" != "/home/user" ] && [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then
+elif [ -d "$WORKSPACE_ROOT/vade-coo-memory" ]; then
+  MEM_REPO="$WORKSPACE_ROOT/vade-coo-memory"
+elif [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then
   MEM_REPO="$HOME/GitHub/vade-app/vade-coo-memory"
 else
   MEM_REPO="/home/user/vade-coo-memory"
@@ -30,9 +35,9 @@ CLAUDE_MD="$MEM_REPO/CLAUDE.md"
 MEMOS="$MEM_REPO/coo/memos.md"
 BOOTSTRAP_LOG="${HOME}/.vade/coo-bootstrap.log"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
-WORKSPACE_IDENTITY_LINK="/home/user/CLAUDE.md"
-WORKSPACE_MCP_LINK="/home/user/.mcp.json"
-WORKSPACE_MCP_SRC="/home/user/vade-runtime/.mcp.json"
+WORKSPACE_IDENTITY_LINK="$WORKSPACE_ROOT/CLAUDE.md"
+WORKSPACE_MCP_LINK="$WORKSPACE_ROOT/.mcp.json"
+WORKSPACE_MCP_SRC="$WORKSPACE_ROOT/vade-runtime/.mcp.json"
 # common.sh seeds VADE_CLOUD_STATE_DIR with a cloud-host default; on Mac
 # local-setup.sh writes the receipt under ~/.vade/local-state/ and hook
 # subprocesses don't inherit its env exports. Redirect when the cloud

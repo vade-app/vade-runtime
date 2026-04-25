@@ -26,6 +26,11 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 OUT_FILE="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Workspace root: parent of vade-runtime. /home/user on cloud,
+# $WORKSPACE_ROOT (e.g. ~/GitHub/vade-app) on local. The cloud-style
+# convenience symlinks (CLAUDE.md and .mcp.json) live here on both
+# surfaces; deriving from SCRIPT_DIR keeps the invariants portable.
+WORKSPACE_ROOT="$(cd "$RUNTIME_DIR/.." && pwd)"
 
 # Array of "key|ok|detail" triples. Flat for shell; node groups by
 # key prefix (A1 → A, B1 → B, etc) at write time.
@@ -62,15 +67,15 @@ A3_ok=true
 if [ -f "$A1_receipt" ] && check_cmd node; then
   claim_mcp="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1])); process.stdout.write(String(!!r.workspace_mcp_symlinked))' "$A1_receipt" 2>/dev/null || echo unknown)"
   claim_id="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1])); process.stdout.write(String(!!r.identity_link_ok))' "$A1_receipt" 2>/dev/null || echo unknown)"
-  expected_mcp_target="$(readlink -f /home/user/vade-runtime/.mcp.json 2>/dev/null || true)"
-  expected_id_target="$(readlink -f /home/user/vade-coo-memory/CLAUDE.md 2>/dev/null || true)"
+  expected_mcp_target="$(readlink -f "$WORKSPACE_ROOT/vade-runtime/.mcp.json" 2>/dev/null || true)"
+  expected_id_target="$(readlink -f "$WORKSPACE_ROOT/vade-coo-memory/CLAUDE.md" 2>/dev/null || true)"
   observed_mcp=false; observed_id=false
-  if [ -L /home/user/.mcp.json ] && [ -n "$expected_mcp_target" ] \
-     && [ "$(readlink -f /home/user/.mcp.json 2>/dev/null)" = "$expected_mcp_target" ]; then
+  if [ -L "$WORKSPACE_ROOT/.mcp.json" ] && [ -n "$expected_mcp_target" ] \
+     && [ "$(readlink -f "$WORKSPACE_ROOT/.mcp.json" 2>/dev/null)" = "$expected_mcp_target" ]; then
     observed_mcp=true
   fi
-  if [ -L /home/user/CLAUDE.md ] && [ -n "$expected_id_target" ] \
-     && [ "$(readlink -f /home/user/CLAUDE.md 2>/dev/null)" = "$expected_id_target" ]; then
+  if [ -L "$WORKSPACE_ROOT/CLAUDE.md" ] && [ -n "$expected_id_target" ] \
+     && [ "$(readlink -f "$WORKSPACE_ROOT/CLAUDE.md" 2>/dev/null)" = "$expected_id_target" ]; then
     observed_id=true
   fi
   [ "$claim_mcp" = "$observed_mcp" ] || { A3_ok=false; A3_detail="mcp_link drift: receipt=$claim_mcp observed-correct-target=$observed_mcp; "; }
@@ -159,19 +164,21 @@ _add B4 "$B4_ok" "$B4_detail"
 _add B5 info "CLAUDE_PROJECT_DIR=${CLAUDE_PROJECT_DIR:-<unset>} cwd=$(pwd) HOME=$HOME"
 
 # ── Group C: Symlinks & MCP config ────────────────────────────
-if [ -L /home/user/CLAUDE.md ] && [ "$(readlink -f /home/user/CLAUDE.md)" = "$(readlink -f /home/user/vade-coo-memory/CLAUDE.md 2>/dev/null)" ]; then
-  _add C1 true "/home/user/CLAUDE.md → vade-coo-memory/CLAUDE.md"
+# Workspace-root convenience symlinks (CLAUDE.md, .mcp.json) live at
+# $WORKSPACE_ROOT — /home/user on cloud, ~/GitHub/vade-app on local.
+if [ -L "$WORKSPACE_ROOT/CLAUDE.md" ] && [ "$(readlink -f "$WORKSPACE_ROOT/CLAUDE.md")" = "$(readlink -f "$WORKSPACE_ROOT/vade-coo-memory/CLAUDE.md" 2>/dev/null)" ]; then
+  _add C1 true "$WORKSPACE_ROOT/CLAUDE.md → vade-coo-memory/CLAUDE.md"
 else
-  _add C1 false "/home/user/CLAUDE.md symlink missing or wrong target"
+  _add C1 false "$WORKSPACE_ROOT/CLAUDE.md symlink missing or wrong target"
 fi
 
-if [ -L /home/user/.mcp.json ] && [ "$(readlink -f /home/user/.mcp.json)" = "$(readlink -f /home/user/vade-runtime/.mcp.json 2>/dev/null)" ]; then
-  _add C2 true "/home/user/.mcp.json → vade-runtime/.mcp.json"
+if [ -L "$WORKSPACE_ROOT/.mcp.json" ] && [ "$(readlink -f "$WORKSPACE_ROOT/.mcp.json")" = "$(readlink -f "$WORKSPACE_ROOT/vade-runtime/.mcp.json" 2>/dev/null)" ]; then
+  _add C2 true "$WORKSPACE_ROOT/.mcp.json → vade-runtime/.mcp.json"
 else
-  _add C2 false "/home/user/.mcp.json symlink missing or wrong target"
+  _add C2 false "$WORKSPACE_ROOT/.mcp.json symlink missing or wrong target"
 fi
 
-if [ -f /home/user/.mcp.json ] && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1]))' /home/user/.mcp.json 2>/dev/null; then
+if [ -f "$WORKSPACE_ROOT/.mcp.json" ] && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1]))' "$WORKSPACE_ROOT/.mcp.json" 2>/dev/null; then
   _add C3 true "mcp.json parses"
 else
   _add C3 false "mcp.json missing or unparseable"
@@ -283,12 +290,15 @@ _add E4 skip "requires-agent: observe tool namespaces"
 F_CUTOFF="2026-04-24"          # date form — used for F2 memo-index, F3 essay-filename comparisons
 F_CUTOFF_GIT="2026-04-24 12:00:00 +0000"  # timestamp form — used for F1/F4 git log --since
 
-# Resolve the vade-coo-memory repo path. Mirrors memo-index.sh and
-# commission-retrospective.sh — the canonical order is env override,
-# macOS per-user checkout, cloud default.
+# Resolve the vade-coo-memory repo path. Canonical order: env
+# override, sibling under WORKSPACE_ROOT (works on both cloud and
+# local since WORKSPACE_ROOT was derived from SCRIPT_DIR above),
+# macOS legacy fallback, cloud legacy fallback.
 if [ -n "${COO_MEMORY_DIR:-}" ]; then
   F_REPO="$COO_MEMORY_DIR"
-elif [ "$HOME" != "/home/user" ] && [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then
+elif [ -d "$WORKSPACE_ROOT/vade-coo-memory" ]; then
+  F_REPO="$WORKSPACE_ROOT/vade-coo-memory"
+elif [ -d "$HOME/GitHub/vade-app/vade-coo-memory" ]; then
   F_REPO="$HOME/GitHub/vade-app/vade-coo-memory"
 else
   F_REPO="/home/user/vade-coo-memory"

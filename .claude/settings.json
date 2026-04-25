@@ -107,7 +107,8 @@
       "Bash(awk:*)",
       "Bash(sed -n:*)",
 
-      "Bash(bash /home/user/vade-runtime/scripts/*:*)",
+      "Bash(bash *vade-runtime/scripts/*:*)",
+      "Bash(bash *.claude/commands/_lib/*:*)",
       "Bash(bash \"$HOME/.claude/vade-hooks/dispatch.sh\":*)",
 
       "Read",

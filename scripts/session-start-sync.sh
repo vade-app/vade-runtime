@@ -29,6 +29,15 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 boot_log_record session-start-sync start
 sync_claude_config "$SCRIPT_DIR/../.claude"
+# Aggregate per-repo primitives from data-owning repos. WORKSPACE_ROOT
+# is the parent of vade-runtime — /home/user on cloud, $WORKSPACE_ROOT
+# on local. Per the data-ownership rule (MEMO 2026-04-25-02), slash
+# commands and skills live in the repo whose data they manipulate; the
+# aggregator surfaces them at the user-scope ~/.claude/ so they're
+# invokable from any cwd.
+WORKSPACE_ROOT_DERIVED="$(cd "$SCRIPT_DIR/../.." && pwd)"
+aggregate_workspace_claude_config "$WORKSPACE_ROOT_DERIVED" "$HOME/.claude" \
+  vade-runtime vade-coo-memory vade-core
 ensure_workspace_mcp_config
 ensure_workspace_identity_link
 # Bridge /home/user/.local/bin/gh (persistent install target) onto
