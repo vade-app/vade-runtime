@@ -631,10 +631,12 @@ ensure_op_cli() {
   local tmp
   tmp="$(mktemp -d)"
   log "Downloading op CLI v${version} (${arch}) → $bindir"
-  # cache.agilebits.com occasionally returns 5xx; retry absorbs the transient
-  # window. Even with the build-time install above, retries are still useful
-  # when the snapshot is cold and this is the first install.
-  if ! retry 3 curl -sfL "$url" -o "$tmp/op.zip"; then
+  # cache.agilebits.com occasionally returns 5xx; retry absorbs the
+  # transient window. 5 attempts (~15s tolerance) matches _op_to_file's
+  # already-tuned budget (line ~942) — same egress origin class, same
+  # flake pattern. Witnessed exhaustion of the prior 3-attempt budget
+  # in run-2026-04-25T182206; #76 propagates the proven budget here.
+  if ! retry 5 curl -sfL "$url" -o "$tmp/op.zip"; then
     log "op CLI download failed after retries: $url"
     rm -rf "$tmp"
     return 1
