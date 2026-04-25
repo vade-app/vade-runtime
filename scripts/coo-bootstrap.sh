@@ -108,9 +108,13 @@ COO_BOOTSTRAP_STEP="ensure_op_cli"
 ensure_op_cli
 
 # Verify the service-account token before attempting any reads. Retry
-# to absorb transient 1Password API errors (503s).
+# to absorb transient 1Password API errors (503s). 5 attempts
+# (~15s tolerance) matches _op_to_file's already-tuned budget
+# (lib/common.sh _op_to_file) — same flake mode. #76 propagates the
+# proven budget here after run-2026-04-25T182206 exhausted the
+# prior 3-attempt budget on a transient api.1password.com hiccup.
 COO_BOOTSTRAP_STEP="op_whoami"
-if ! retry 3 op whoami >/dev/null; then
+if ! retry 5 op whoami >/dev/null; then
   log "FATAL: op whoami failed after retries. Check OP_SERVICE_ACCOUNT_TOKEN and vault access."
   exit 1
 fi
