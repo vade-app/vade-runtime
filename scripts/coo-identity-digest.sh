@@ -185,7 +185,7 @@ else
   echo ""
   echo "  WARN: identity is degraded — required env vars are missing."
   echo "  Inspect $BOOTSTRAP_LOG for the failing step, then re-run:"
-  echo "    VADE_FORCE_COO_BOOTSTRAP=1 bash \"${CLAUDE_PROJECT_DIR:-/home/user/vade-runtime}/scripts/coo-bootstrap.sh\""
+  echo "    VADE_FORCE_COO_BOOTSTRAP=1 bash \"${SCRIPT_DIR}/coo-bootstrap.sh\""
 fi
 
 # Classify OP_SERVICE_ACCOUNT_TOKEN visibility across build/session. The

@@ -596,6 +596,18 @@ GH_VERSION_DEFAULT="2.91.0"
 COO_AUTH_FP_EXPECTED="SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys"
 COO_SIGN_FP_EXPECTED="SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A"
 
+# Snapshot-persistent user bindir. Cloud harness runs as root and the
+# /home/user/ tree survives snapshot → resume; local Mac has no
+# /home/user/ and runs as the operator's user, so $HOME/.local/bin is
+# the right target. Both ensure_op_cli and ensure_gh_cli install here.
+_snapshot_user_bindir() {
+  if [ "$(id -u)" = "0" ] && [ -d /home/user ]; then
+    printf '/home/user/.local/bin'
+  else
+    printf '%s/.local/bin' "$HOME"
+  fi
+}
+
 ensure_op_cli() {
   # Install into a snapshot-persistent path so a build-time install is
   # still on disk at session-resume time. /root/ resets each resume in
@@ -605,7 +617,8 @@ ensure_op_cli() {
   # egress proxy is flaky (see run-2026-04-22T062313 and
   # run-2026-04-22T213126: "DNS cache overflow" 503 from the egress
   # gateway, both times).
-  local bindir="/home/user/.local/bin"
+  local bindir
+  bindir="$(_snapshot_user_bindir)"
   case ":$PATH:" in
     *":$bindir:"*) ;;
     *) export PATH="$bindir:$PATH" ;;
@@ -672,9 +685,8 @@ ensure_op_cli() {
 # Linux-only auto-install. On macOS (Darwin) the expectation is that
 # `brew install gh` has already satisfied check_cmd; if it hasn't, this
 # function refuses rather than dropping a non-runnable Linux binary
-# into ${HOME}/.local/bin. ensure_op_cli is currently Linux-only too
-# but hardcodes its bindir; aligning that pattern is tracked separately
-# so this PR stays scoped.
+# into ${HOME}/.local/bin. Bindir resolution is shared with ensure_op_cli
+# via _snapshot_user_bindir.
 #
 # Rationale: vade-app/vade-runtime#36 documents the mcp__github-coo__*
 # streamable-HTTP transport failure ("DNS cache overflow") that forces
@@ -686,11 +698,7 @@ ensure_op_cli() {
 # invariant stays load-bearing even when the primary MCP is down.
 ensure_gh_cli() {
   local bindir
-  if [ "$(id -u)" = "0" ] && [ -d /home/user ]; then
-    bindir="/home/user/.local/bin"
-  else
-    bindir="${HOME}/.local/bin"
-  fi
+  bindir="$(_snapshot_user_bindir)"
   case ":$PATH:" in
     *":$bindir:"*) ;;
     *) export PATH="$bindir:$PATH" ;;
@@ -839,12 +847,27 @@ fetch_coo_secrets() {
   chmod 600 "$env_file"
   log "  wrote $env_file (0600)"
 
-  _write_claude_settings_env "$github_pat" "$agentmail_key" "$mem0_key"
-
+  # Export to current shell so validate_coo_identity (which reads
+  # $GITHUB_MCP_PAT) sees the freshly-fetched PAT. settings.json mutation
+  # happens later in merge_coo_settings_env, only after validation
+  # passes — see #66 (env-merge-before-validate).
   [ -n "$github_pat" ]    && export GITHUB_MCP_PAT="$github_pat" GITHUB_TOKEN="$github_pat"
   [ -n "$agentmail_key" ] && export AGENTMAIL_API_KEY="$agentmail_key"
   [ -n "$mem0_key" ]      && export MEM0_API_KEY="$mem0_key"
   return 0
+}
+
+# Merge the (now-validated) COO env into ~/.claude/settings.json. Called
+# from coo-bootstrap.sh AFTER validate_coo_identity, so a wrong-identity
+# PAT never lands in the harness's persistent state. Reads from the
+# already-exported environment populated by fetch_coo_secrets — keeps
+# the call symmetric with the shell-export step there. See #66 for
+# the env-merge-before-validate failure mode this ordering closes.
+merge_coo_settings_env() {
+  _write_claude_settings_env \
+    "${GITHUB_MCP_PAT:-}" \
+    "${AGENTMAIL_API_KEY:-}" \
+    "${MEM0_API_KEY:-}"
 }
 
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
@@ -1090,6 +1113,23 @@ validate_coo_identity() {
     return 1
   fi
   log "GitHub PAT valid for: $login"
+}
+
+# Quiet variant for the marker-shortcut precondition (#72): probes the
+# already-cached $GITHUB_MCP_PAT and returns 0 only when GitHub
+# confirms login=vade-coo. No retries (the marker shortcut is a fast
+# path; if the network is down, fall through to the full bootstrap
+# which has its own retry budget). No log output on the happy path —
+# only on fail-and-fall-through, so the operator sees why the marker
+# was bypassed. Single curl, hard 5s timeout — keeps the SessionStart
+# happy path within the existing budget envelope.
+_cached_pat_still_valid() {
+  [ -n "${GITHUB_MCP_PAT:-}" ] || return 1
+  local body login
+  body="$(curl -sfH "Authorization: Bearer ${GITHUB_MCP_PAT}" --max-time 5 \
+                  https://api.github.com/user 2>/dev/null)" || return 1
+  login="$(printf '%s' "$body" | grep -oE '"login"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
+  [ "$login" = "vade-coo" ]
 }
 
 summarize_coo_identity() {
