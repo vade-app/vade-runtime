@@ -70,7 +70,8 @@ _settings_env_complete() {
     try { cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) || {}; }
     catch { process.exit(1); }
     const env = cfg.env || {};
-    const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY", "MEM0_API_KEY"];
+    const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY", "MEM0_API_KEY",
+                      "VADE_CLOUD_STATE_DIR", "PATH"];
     for (const k of required) { if (!env[k]) process.exit(1); }
     process.exit(0);
   ' "$settings" 2>/dev/null
@@ -141,6 +142,12 @@ validate_coo_identity
 
 COO_BOOTSTRAP_STEP="merge_coo_settings_env"
 merge_coo_settings_env
+
+# Persist non-secret path state (VADE_CLOUD_STATE_DIR + PATH with the
+# snapshot user bindir prepended) into ~/.claude/settings.json env so
+# fresh shells inherit it on first try. vade-runtime#83.
+COO_BOOTSTRAP_STEP="merge_coo_settings_paths"
+merge_coo_settings_paths
 
 COO_BOOTSTRAP_STEP="summarize_coo_identity"
 summarize_coo_identity

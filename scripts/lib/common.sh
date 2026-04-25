@@ -891,6 +891,19 @@ merge_coo_settings_env() {
     "${MEM0_API_KEY:-}"
 }
 
+# Persist non-secret bootstrap-derived path state into ~/.claude/settings.json
+# env so every shell the harness spawns (sub-agents, Bash tool calls,
+# Skill invocations) inherits it on first try. Without this the bootstrap
+# knows VADE_CLOUD_STATE_DIR and the snapshot user bindir during its own
+# run, but they evaporate after exit — leaving CLAUDE.md fallbacks
+# (which assume $HOME == cwd) and `command -v op` to fail in fresh shells.
+# vade-runtime#83.
+merge_coo_settings_paths() {
+  local bindir
+  bindir="$(_snapshot_user_bindir)"
+  _write_claude_settings_paths "$VADE_CLOUD_STATE_DIR" "$bindir"
+}
+
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
 # Code reads this at process startup, so ${GITHUB_MCP_PAT} etc. in
 # .mcp.json substitute correctly. Idempotent.
@@ -951,6 +964,61 @@ _write_claude_settings_env() {
   ' "$settings_file"
   chmod 600 "$settings_file"
   log "  merged COO env vars into $settings_file"
+}
+
+# Persist non-secret path state into the same settings.json env block.
+# Split from _write_claude_settings_env because it has no PAT validation
+# dependency — it can run any time after _snapshot_user_bindir is
+# resolvable, including a re-run on cached-PAT skip path. Idempotent.
+#
+# - VADE_CLOUD_STATE_DIR: where integrity-check.json, setup-receipt.json,
+#   and build.log live. Without this in env, CLAUDE.md's documented
+#   ${VADE_CLOUD_STATE_DIR:-$HOME/.vade-cloud-state} fallback resolves
+#   to /root/.vade-cloud-state on the cloud harness (HOME=/root) — wrong
+#   tree. vade-runtime#83.
+# - PATH: prepend the snapshot user bindir so `op`, `gh` (when installed
+#   here), and any other ensure_*_cli tooling resolve in shells the
+#   harness spawns after bootstrap exits. ensure_op_cli prepends to its
+#   own shell only; settings.json env is the durable surface.
+_write_claude_settings_paths() {
+  local cloud_state_dir="$1" bindir="$2"
+  if ! check_cmd node; then
+    log "Warning: node missing; skipping ~/.claude/settings.json paths merge"
+    return 0
+  fi
+  local settings_dir="${HOME}/.claude"
+  local settings_file="$settings_dir/settings.json"
+  mkdir -p "$settings_dir"
+  [ -f "$settings_file" ] || echo '{}' > "$settings_file"
+
+  VADE_CLOUD_STATE_DIR="$cloud_state_dir" VADE_BINDIR="$bindir" node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(path, "utf8")) || {}; }
+    catch (e) {
+      console.error("[vade-setup] " + path + " unparseable; aborting paths merge.");
+      process.exit(1);
+    }
+    const merged = Object.assign({}, cfg.env || {});
+    if (process.env.VADE_CLOUD_STATE_DIR) {
+      merged.VADE_CLOUD_STATE_DIR = process.env.VADE_CLOUD_STATE_DIR;
+    }
+    if (process.env.VADE_BINDIR) {
+      // Prepend bindir to PATH idempotently. Use ${PATH} so bash expands
+      // it at shell init against whatever the harness has set.
+      const bindir = process.env.VADE_BINDIR;
+      const existing = merged.PATH || "${PATH}";
+      // Idempotency: dont prepend if already first-segment.
+      if (!existing.startsWith(bindir + ":")) {
+        merged.PATH = bindir + ":" + existing;
+      }
+    }
+    cfg.env = merged;
+    fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+  ' "$settings_file"
+  chmod 600 "$settings_file"
+  log "  merged COO path vars into $settings_file"
 }
 
 # Ensure openssh-client is present (provides ssh-keygen + ssh-keyscan).
