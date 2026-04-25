@@ -77,16 +77,28 @@ _settings_env_complete() {
 }
 if [ "${VADE_FORCE_COO_BOOTSTRAP:-0}" != "1" ] \
    && [ -f "$COO_ENV_FILE" ] && [ -f "$COO_BOOT_MARKER" ] \
-   && _settings_env_complete; then
+   && _settings_env_complete \
+   && _cached_pat_still_valid; then
   log "coo-bootstrap: already complete this container; skipping."
   COO_BOOTSTRAP_STEP="skip-marker-present"
-  bootstrap_log_record SKIP "marker present at $COO_BOOT_MARKER"
+  bootstrap_log_record SKIP "marker present at $COO_BOOT_MARKER (cached PAT validated)"
   trap - EXIT
   exit 0
 fi
 if [ -f "$COO_BOOT_MARKER" ] && [ "${VADE_FORCE_COO_BOOTSTRAP:-0}" != "1" ]; then
-  log "coo-bootstrap: marker present but settings.json env incomplete; re-running"
-  bootstrap_log_record START "marker stale (settings.json env missing keys); forcing re-run"
+  # Marker exists but at least one shortcut precondition failed:
+  # settings.json env block is missing a key (pre-#18 bootstrap, see
+  # comment above), or the cached PAT no longer authenticates as
+  # vade-coo (#72 — revocation/scope-change/expiry between snapshots).
+  # Fall through to the full bootstrap to refresh both.
+  if [ -f "$COO_ENV_FILE" ] && _settings_env_complete \
+     && ! _cached_pat_still_valid; then
+    log "coo-bootstrap: marker present but cached GITHUB_MCP_PAT no longer authenticates as vade-coo; re-running"
+    bootstrap_log_record START "marker stale (cached PAT failed validation); forcing re-run"
+  else
+    log "coo-bootstrap: marker present but settings.json env incomplete; re-running"
+    bootstrap_log_record START "marker stale (settings.json env missing keys); forcing re-run"
+  fi
 fi
 
 log "coo-bootstrap: starting"
@@ -117,8 +129,18 @@ fetch_coo_secrets
 COO_BOOTSTRAP_STEP="write_coo_gitconfig"
 write_coo_gitconfig
 
+# Validate BEFORE merging into ~/.claude/settings.json (#66): a
+# wrong-identity PAT must never land in the harness's persistent env
+# block. fetch_coo_secrets stages secrets in ~/.vade/coo-env and exports
+# them to this shell so validate_coo_identity can hit api.github.com;
+# only after that succeeds does merge_coo_settings_env write the PAT
+# into settings.json. set -e ensures we exit before merge on validate
+# failure.
 COO_BOOTSTRAP_STEP="validate_coo_identity"
 validate_coo_identity
+
+COO_BOOTSTRAP_STEP="merge_coo_settings_env"
+merge_coo_settings_env
 
 COO_BOOTSTRAP_STEP="summarize_coo_identity"
 summarize_coo_identity
