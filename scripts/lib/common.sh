@@ -980,6 +980,15 @@ _write_claude_settings_env() {
 #   here), and any other ensure_*_cli tooling resolve in shells the
 #   harness spawns after bootstrap exits. ensure_op_cli prepends to its
 #   own shell only; settings.json env is the durable surface.
+#
+#   Critical: Claude Code does NOT shell-expand env values from
+#   settings.json — it passes them as-is to subprocesses. So we must
+#   write the *literal expanded* PATH at bootstrap time, not a
+#   "${PATH}" placeholder. The first cut of vade-runtime#83 wrote
+#   the literal string "/home/user/.local/bin:${PATH}" and broke fresh
+#   sessions (ls/which/bash all "command not found" because ${PATH}
+#   was treated as a directory name). This pass captures the actual
+#   bootstrap-shell PATH and serializes it.
 _write_claude_settings_paths() {
   local cloud_state_dir="$1" bindir="$2"
   if ! check_cmd node; then
@@ -991,7 +1000,18 @@ _write_claude_settings_paths() {
   mkdir -p "$settings_dir"
   [ -f "$settings_file" ] || echo '{}' > "$settings_file"
 
-  VADE_CLOUD_STATE_DIR="$cloud_state_dir" VADE_BINDIR="$bindir" node -e '
+  # Capture the live PATH for the node child to embed verbatim. Strip
+  # any pre-existing bindir prefix so we don't double-prepend across
+  # bootstrap re-runs (e.g., after marker invalidation).
+  local live_path="${PATH}"
+  case ":${live_path}:" in
+    ":${bindir}:"*) live_path="${live_path#${bindir}:}" ;;
+    *":${bindir}:"*) live_path="${live_path//:${bindir}:/:}" ;;
+    *":${bindir}") live_path="${live_path%:${bindir}}" ;;
+  esac
+
+  VADE_CLOUD_STATE_DIR="$cloud_state_dir" VADE_BINDIR="$bindir" \
+  VADE_LIVE_PATH="$live_path" node -e '
     const fs = require("fs");
     const path = process.argv[1];
     let cfg = {};
@@ -1004,15 +1024,14 @@ _write_claude_settings_paths() {
     if (process.env.VADE_CLOUD_STATE_DIR) {
       merged.VADE_CLOUD_STATE_DIR = process.env.VADE_CLOUD_STATE_DIR;
     }
-    if (process.env.VADE_BINDIR) {
-      // Prepend bindir to PATH idempotently. Use ${PATH} so bash expands
-      // it at shell init against whatever the harness has set.
+    if (process.env.VADE_BINDIR && process.env.VADE_LIVE_PATH !== undefined) {
+      // Always rewrite from a known-good base (the captured shell PATH
+      // with our bindir stripped) — never inherit a prior settings.json
+      // PATH value, because that value may itself be the broken
+      // "${PATH}"-literal output of a previous bootstrap run.
       const bindir = process.env.VADE_BINDIR;
-      const existing = merged.PATH || "${PATH}";
-      // Idempotency: dont prepend if already first-segment.
-      if (!existing.startsWith(bindir + ":")) {
-        merged.PATH = bindir + ":" + existing;
-      }
+      const live = process.env.VADE_LIVE_PATH;
+      merged.PATH = live ? bindir + ":" + live : bindir;
     }
     cfg.env = merged;
     fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
