@@ -73,6 +73,14 @@ _settings_env_complete() {
     const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY", "MEM0_API_KEY",
                       "VADE_CLOUD_STATE_DIR", "PATH"];
     for (const k of required) { if (!env[k]) process.exit(1); }
+    // PATH content sanity: Claude Code does not shell-expand env values,
+    // so a literal "${PATH}" in this position is the broken-output of an
+    // earlier bootstrap (vade-runtime#83 first-cut bug). Force re-run so
+    // _write_claude_settings_paths overwrites with the expanded form.
+    // Also require /usr/bin in the value as a basic sanity floor.
+    if (env.PATH.includes("${PATH}") || !env.PATH.includes("/usr/bin")) {
+      process.exit(1);
+    }
     process.exit(0);
   ' "$settings" 2>/dev/null
 }
