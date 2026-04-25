@@ -723,12 +723,12 @@ fetch_coo_secrets() {
   local github_pat="" agentmail_key="" mem0_key=""
   local got=0
 
-  if github_pat="$(retry 3 op read 'op://COO/vade-coo-self-2026-04/credential')" && [ -n "$github_pat" ]; then
+  if github_pat="$(retry 3 op read 'op://COO/vade-coo-self-2026-04/token')" && [ -n "$github_pat" ]; then
     log "  read GitHub PAT (len=${#github_pat})"
     got=$((got+1))
   else
     github_pat=""
-    log "  WARN: op://COO/vade-coo-self-2026-04/credential unavailable; GITHUB_MCP_PAT/GITHUB_TOKEN will be unset"
+    log "  WARN: op://COO/vade-coo-self-2026-04/token unavailable; GITHUB_MCP_PAT/GITHUB_TOKEN will be unset"
   fi
 
   if agentmail_key="$(retry 3 op read 'op://COO/agentmail-vade-coo/credential')" && [ -n "$agentmail_key" ]; then
