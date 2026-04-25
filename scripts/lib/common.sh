@@ -617,6 +617,11 @@ ensure_op_cli() {
   # egress proxy is flaky (see run-2026-04-22T062313 and
   # run-2026-04-22T213126: "DNS cache overflow" 503 from the egress
   # gateway, both times).
+  #
+  # Linux-only auto-install. On macOS (Darwin) the expectation is that
+  # `brew install 1password-cli` has already satisfied check_cmd; if it
+  # hasn't, this function refuses rather than dropping a non-runnable
+  # Linux binary into ${HOME}/.local/bin (vade-runtime#81).
   local bindir
   bindir="$(_snapshot_user_bindir)"
   case ":$PATH:" in
@@ -628,6 +633,20 @@ ensure_op_cli() {
     log "op CLI present: $(op --version 2>&1 | head -1)"
     return 0
   fi
+
+  local os
+  os="$(uname -s)"
+  case "$os" in
+    Linux) ;;
+    Darwin)
+      log "op CLI not present on macOS; install via: brew install 1password-cli"
+      return 1
+      ;;
+    *)
+      log "op CLI: unsupported OS '$os'"
+      return 1
+      ;;
+  esac
 
   local version="${OP_VERSION:-$OP_VERSION_DEFAULT}"
   local arch
