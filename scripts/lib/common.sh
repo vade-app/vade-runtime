@@ -192,11 +192,23 @@ retry() {
   err_file="$(mktemp 2>/dev/null)" || { "$@"; return $?; }
   while [ "$attempt" -lt "$tries" ]; do
     attempt=$((attempt+1))
-    if "$@" 2>"$err_file"; then
+    # Capture the actual exit of "$@" via `|| rc=$?`. The prior
+    # `if "$@"; then ...; fi; rc=$?` pattern is a bash gotcha: after
+    # an if-compound where no branch was taken, $? is 0, not the
+    # failed command's exit. That made `retry` log rc=0 on every
+    # retry line AND made `return "$rc"` after a full-failure loop
+    # return 0, silently signalling success. Callers like `_op_to_file`
+    # with `if ! content="$(retry 3 op read "$ref")"; then return 1`
+    # never saw the failure: content came back empty, the ssh key
+    # file got a bare newline, and install_coo_ssh_keys FATALed at
+    # the fingerprint check instead of upstream at _op_to_file.
+    # Witnessed on snapshot run-2026-04-22T091701.
+    rc=0
+    "$@" 2>"$err_file" || rc=$?
+    if [ "$rc" -eq 0 ]; then
       rm -f "$err_file"
       return 0
     fi
-    rc=$?
     if [ "$attempt" -lt "$tries" ]; then
       log_err "  retry ${attempt}/${tries} for: $* (rc=$rc; sleeping ${delay}s)"
       sleep "$delay"
@@ -205,7 +217,7 @@ retry() {
   done
   local last_err
   last_err="$(tr '\n' ' ' < "$err_file" 2>/dev/null | cut -c1-240)"
-  log_err "  FAIL after ${tries} attempts: $* (last err: ${last_err:-<empty>})"
+  log_err "  FAIL after ${tries} attempts: $* (last err: ${last_err:-<empty>}; final rc=$rc)"
   cat "$err_file" >&2 2>/dev/null || true
   rm -f "$err_file"
   return "$rc"
@@ -920,8 +932,23 @@ install_coo_ssh_keys() {
 _op_to_file() {
   local ref="$1" path="$2" mode="$3"
   local content
-  if ! content="$(retry 3 op read "$ref")"; then
+  # 5 attempts (sleeps 1+2+4+8 = 15s of tolerance) absorbs 1Password
+  # service-account cold-start latency on first `op read` of a fresh
+  # container. Observed on run-2026-04-22T091701: first bootstrap
+  # attempt FAILED at install_coo_ssh_keys; second attempt
+  # (`VADE_FORCE_COO_BOOTSTRAP=1`) succeeded after 2 retries on the
+  # same ref, suggesting 3 attempts was inside the cold-start window
+  # but 5 clears it comfortably.
+  if ! content="$(retry 5 op read "$ref")"; then
     log "Failed to read $ref after retries"
+    return 1
+  fi
+  # Empty content from a rc=0 `op read` indicates a 1Password API
+  # soft-fail that didn't set an exit code — fail loudly rather than
+  # writing a bare-newline file that trips the fingerprint check
+  # downstream with a confusing error.
+  if [ -z "$content" ]; then
+    log "Failed to read $ref: empty content (op read returned rc=0 with no output)"
     return 1
   fi
   (
