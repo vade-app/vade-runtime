@@ -70,7 +70,7 @@ _settings_env_complete() {
     try { cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) || {}; }
     catch { process.exit(1); }
     const env = cfg.env || {};
-    const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY"];
+    const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY", "MEM0_API_KEY"];
     for (const k of required) { if (!env[k]) process.exit(1); }
     process.exit(0);
   ' "$settings" 2>/dev/null
