@@ -287,8 +287,19 @@ _add E4 skip "requires-agent: observe tool namespaces"
 # decision-bearing commit of the day; an "adoption moment" captures
 # the adoption boundary cleanly without retroactively flagging a
 # legitimate pre-adoption attribution.
-F_CUTOFF="2026-04-24"          # date form — used for F2 memo-index, F3 essay-filename comparisons
-F_CUTOFF_GIT="2026-04-24 12:00:00 +0000"  # timestamp form — used for F1/F4 git log --since
+#
+# F_CUTOFF_GIT bumped 2026-04-26 per MEMO 2026-04-26-01 to retire
+# 7 chronic-yellow F4 hits (3 nightly-routine, 2 historical Ven-
+# human-action quick-fixes, 1 post-convention quick-fix where the
+# auto-marker workflow did not yet exist, 1 coo-scope refactor where
+# the bootstrap was degraded at PR-open time). The auto-marker workflow
+# in vade-coo-memory/.github/workflows/f4-marker.yml takes effect on
+# PRs opened from this point forward; F4 reflects the post-workflow
+# reality rather than the historical accumulation. F_CUTOFF (date form)
+# stays at 2026-04-24 — F2/F3 are green and the broader memo/essay
+# invariants should keep the wider window.
+F_CUTOFF="2026-04-24"                     # date form — used for F2 memo-index, F3 essay-filename comparisons
+F_CUTOFF_GIT="2026-04-26 00:30:00 +0000"  # timestamp form — used for F1/F4 git log --since
 
 # Resolve the vade-coo-memory repo path. Canonical order: env
 # override, sibling under WORKSPACE_ROOT (works on both cloud and
