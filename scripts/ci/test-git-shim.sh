@@ -6,13 +6,13 @@
 # mock wrapper that records its argv. Run the shim with various arg
 # shapes and assert the right binary is reached.
 #
-# Run: bash scripts/test-git-shim.sh
+# Run: bash scripts/ci/test-git-shim.sh
 # Exit: 0 if all assertions pass, non-zero otherwise.
 
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHIM="$SCRIPT_DIR/git-shim.sh"
+SHIM="$SCRIPT_DIR/../git-shim.sh"
 
 [ -x "$SHIM" ] || { echo "FAIL: shim not executable at $SHIM"; exit 1; }
 
