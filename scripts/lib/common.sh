@@ -810,6 +810,46 @@ ensure_gh_symlink_on_path() {
   ln -sfn "$target" "$link"
 }
 
+# Install the gh-coo-wrap wrapper at /home/user/.local/bin/gh so every
+# attributable `gh` write auto-carries the Claude Code session URL.
+# Substrate enforcement of vade-coo-memory MEMO 2026-04-26-02 (issue
+# #150). The real gh binary moves to /home/user/.local/bin/gh-real;
+# the wrapper exec's it after augmenting --body / --body-file.
+#
+# Idempotent: subsequent runs detect the wrapper marker and only
+# refresh the wrapper content (in case the source script has been
+# updated). Cloud-only path guard (root + /home/user); macOS/local
+# uses brew gh and is left untouched.
+ensure_gh_coo_wrap() {
+  [ "$(id -u)" = "0" ] && [ -d /home/user ] || return 0
+  local gh_path="/home/user/.local/bin/gh"
+  local real_path="/home/user/.local/bin/gh-real"
+  local wrapper_src="${1:-}"
+  if [ -z "$wrapper_src" ] || [ ! -f "$wrapper_src" ]; then
+    log "gh-coo-wrap: source script missing; skipping"
+    return 0
+  fi
+  if [ ! -x "$gh_path" ]; then
+    log "gh-coo-wrap: $gh_path missing; skipping (ensure_gh_cli installs gh)"
+    return 0
+  fi
+  if grep -q 'COO-GH-COO-WRAP-MARKER-v1' "$gh_path" 2>/dev/null; then
+    # Wrapper already installed — refresh content in case the source has changed.
+    install -m 0755 "$wrapper_src" "$gh_path"
+    return 0
+  fi
+  # First-time install: rename real binary and place wrapper.
+  if [ ! -x "$real_path" ]; then
+    mv "$gh_path" "$real_path"
+  else
+    # Real binary already present (recovery from a partial state):
+    # back up whatever is at gh_path and replace with the wrapper.
+    rm -f "$gh_path"
+  fi
+  install -m 0755 "$wrapper_src" "$gh_path"
+  log "gh-coo-wrap: installed (wrapper at $gh_path, real binary at $real_path)"
+}
+
 # Fetch COO secrets from 1Password and write ~/.vade/coo-env plus a
 # merged env block in ~/.claude/settings.json so Claude Code resolves
 # ${GITHUB_MCP_PAT} / ${AGENTMAIL_API_KEY} at startup. Each read is
