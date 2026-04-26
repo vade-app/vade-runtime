@@ -76,6 +76,13 @@ git config --global --add safe.directory "$RUNTIME_DST" 2>/dev/null || true
 
 log "Stubbing sibling repos at $WORKSPACE_ROOT"
 rm -rf "$COO_MEM_DST" "$CORE_DST"
+# Wipe workspace-scope leftovers from prior runs so a regression in
+# cloud-setup or session-start-sync (e.g. a missing
+# ensure_workspace_identity_link call) actually fails C1/C2 instead of
+# being masked by a stale symlink. Production CI on ubuntu-latest gets
+# a fresh runner per job; local re-runs need the explicit clean.
+rm -rf "$WORKSPACE_ROOT/CLAUDE.md" "$WORKSPACE_ROOT/.mcp.json" \
+       "$WORKSPACE_ROOT/.vade-cloud-state"
 mkdir -p "$COO_MEM_DST/coo" "$COO_MEM_DST/identity"
 cat > "$COO_MEM_DST/CLAUDE.md" <<'EOF'
 # vade-coo-memory CLAUDE.md (CI bootstrap-regression stub)
@@ -124,6 +131,14 @@ unset GIT_CONFIG_GLOBAL XDG_CONFIG_HOME
 
 # ── 5. Fake credentials + run cloud-setup ────────────────────────
 export OP_SERVICE_ACCOUNT_TOKEN="ops_FAKE_CI_TOKEN_DO_NOT_USE_FOR_REAL_CALLS"
+
+# Pin cloud-state under WORKSPACE_ROOT so the runner reads the same
+# integrity-check.json that cloud-setup wrote. Without this override the
+# common.sh default (/home/user/.vade-cloud-state) wins when the
+# inherited env doesn't already point there, and a non-/home/user
+# WORKSPACE_ROOT in CI yields a path mismatch (cloud-setup writes to
+# /home/user/, runner reads from /tmp/...).
+export VADE_CLOUD_STATE_DIR="$WORKSPACE_ROOT/.vade-cloud-state"
 
 log "Running scripts/cloud-setup.sh"
 bash "$RUNTIME_DST/scripts/cloud-setup.sh"
