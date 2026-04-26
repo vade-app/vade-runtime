@@ -265,11 +265,111 @@ fi
 # ── Group E: MCP surface ─────────────────────────────────────
 # Requires MCP tool calls (get_me on github and github-coo namespaces).
 # An agent invoking this directly should fill E1/E2/E3/E4 into the
-# JSON afterwards. CI skips E entirely.
+# JSON afterwards. CI skips E1-E4 entirely. E5 is a script-level probe
+# that doesn't require an agent — it spawns the stdio Mem0 MCP and
+# confirms the JSON-RPC handshake.
 _add E1 skip "requires-agent: call mcp__github__get_me"
 _add E2 skip "requires-agent: call mcp__github-coo__get_me"
 _add E3 skip "requires-agent: inspect mcp-needs-auth-cache.json"
 _add E4 skip "requires-agent: observe tool namespaces"
+
+# E5: stdio Mem0 MCP server is installed and answers initialize.
+# The hosted https://mcp.mem0.ai endpoint hits a Node `undici` DNS-cache
+# overflow inside Claude Code's MCP HTTP transport on cloud-harness
+# boots (vade-runtime#36/#109), leaving the agent with no Mem0 surface
+# for the rest of the session. We bypass that by running the official
+# stdio MCP server (`mem0-mcp-server`, pinned via common.sh) as a
+# subprocess. This probe is the on-disk + handshake gate: if the binary
+# is missing OR the JSON-RPC initialize fails OR the tool list is
+# missing the read/write surface we depend on, mark E5 false. The
+# coo-identity-digest banner highlights any E* failure in the degraded
+# block, so a degraded Mem0 surface is loud at SessionStart.
+#
+# Skip on CI (VADE_CI_ALLOWLIST will absorb it via the existing E*
+# allowlist convention) or when the binary truly cannot be tested
+# (no MEM0_API_KEY in env — the server won't accept initialize without
+# auth). Live-only invariant; not part of the bootstrap-regression
+# Layer-1 gate.
+E5_ok=skip
+E5_detail="requires mem0-mcp-server binary + MEM0_API_KEY"
+_mem0_bin=""
+for _candidate in "/home/user/.local/bin/mem0-mcp-server" "$HOME/.local/bin/mem0-mcp-server" "${VADE_BINDIR_OVERRIDE:-}/mem0-mcp-server"; do
+  if [ -n "$_candidate" ] && [ -x "$_candidate" ]; then
+    _mem0_bin="$_candidate"
+    break
+  fi
+done
+
+if [ -z "$_mem0_bin" ]; then
+  E5_ok=false
+  E5_detail="mem0-mcp-server binary missing; run ensure_mem0_mcp_server (cloud-setup.sh installs at build; session-start-sync.sh retries on resume)"
+elif [ -z "${MEM0_API_KEY:-}" ]; then
+  # Binary present but no key in process env. settings.json env will
+  # populate it for Claude's MCP spawn, but the script itself runs in
+  # a hook subprocess that may not have inherited yet. Treat as skip
+  # rather than fail to avoid false negatives.
+  E5_ok=skip
+  E5_detail="mem0-mcp-server present at $_mem0_bin; MEM0_API_KEY not in hook env (cannot probe; settings.json env will populate at MCP spawn)"
+elif ! check_cmd timeout || ! check_cmd node; then
+  E5_ok=skip
+  E5_detail="timeout or node missing; cannot probe"
+else
+  # Send initialize + initialized notification + tools/list, then read
+  # responses with a tight timeout. The server emits one JSON-RPC line
+  # per response on stdout. Success criteria: line 1 has
+  # result.serverInfo.name == "mem0", and tools list contains
+  # get_memories + search_memories + add_memory.
+  E5_probe_out="$(
+    {
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"integrity-check","version":"1.0"}}}'
+      sleep 0.2
+      printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+      sleep 0.1
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+      sleep 1.5
+    } | MEM0_API_KEY="$MEM0_API_KEY" timeout 6 "$_mem0_bin" 2>/dev/null \
+      | head -3
+  )"
+  E5_verdict="$(printf '%s' "$E5_probe_out" | node -e '
+    let data = "";
+    process.stdin.on("data", c => data += c);
+    process.stdin.on("end", () => {
+      const lines = data.split("\n").filter(Boolean);
+      let serverName = null;
+      let toolNames = [];
+      for (const l of lines) {
+        try {
+          const m = JSON.parse(l);
+          if (m.id === 1 && m.result?.serverInfo?.name) serverName = m.result.serverInfo.name;
+          if (m.id === 2 && Array.isArray(m.result?.tools)) toolNames = m.result.tools.map(t => t.name);
+        } catch {}
+      }
+      const required = ["get_memories", "search_memories", "add_memory"];
+      const missing = required.filter(n => !toolNames.includes(n));
+      const out = {
+        serverName,
+        toolCount: toolNames.length,
+        missing,
+        ok: serverName === "mem0" && missing.length === 0,
+      };
+      process.stdout.write(JSON.stringify(out));
+    });
+  ' 2>/dev/null)"
+
+  if [ -n "$E5_verdict" ] && printf '%s' "$E5_verdict" | grep -q '"ok":true'; then
+    E5_ok=true
+    E5_tools="$(printf '%s' "$E5_verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const o=JSON.parse(d);process.stdout.write(o.toolCount+"")}catch{process.stdout.write("?")}})' 2>/dev/null || echo "?")"
+    E5_detail="stdio Mem0 MCP healthy: $_mem0_bin (initialize ok, $E5_tools tools)"
+  else
+    E5_ok=false
+    if [ -z "$E5_probe_out" ]; then
+      E5_detail="$_mem0_bin spawned but produced no JSON-RPC output in 6s; check MEM0_API_KEY validity, network egress to api.mem0.ai, and 'cat \$E5_probe_out_path' for any stderr"
+    else
+      E5_detail="$_mem0_bin handshake failed: $(printf '%s' "$E5_verdict" | head -c 240)"
+    fi
+  fi
+fi
+_add E5 "$E5_ok" "$E5_detail"
 
 # ── Group F: Culture-system substrate discipline ─────────────
 # Implements E1–E4 from coo/foundations/2026-04-22_we-can-claim-a-record.md

@@ -593,6 +593,11 @@ print_versions() {
 
 OP_VERSION_DEFAULT="2.31.0"
 GH_VERSION_DEFAULT="2.91.0"
+# Mem0 stdio MCP server. Bypasses the Node `undici` DNS-cache-overflow
+# failure that kills Claude Code's MCP HTTP transport against
+# api.mem0.ai (vade-runtime#36/#109). Pinned because the upstream repo
+# (mem0ai/mem0-mcp) was archived in 2025-12 — bump deliberately.
+MEM0_MCP_SERVER_VERSION_DEFAULT="0.2.1"
 # Hardcoded production fingerprints; env-overridable so the bootstrap-
 # regression CI (.github/workflows/bootstrap-regression.yml) can
 # substitute fixture-key fingerprints without forking install_coo_ssh_keys.
@@ -799,6 +804,76 @@ ensure_gh_cli() {
     return 1
   fi
   log "Installed gh CLI: $(gh --version 2>&1 | head -1)"
+}
+
+# Durable Mem0 MCP read/write surface for COO identity & episodic recall.
+#
+# Installs the `mem0-mcp-server` Python package (PyPI) into a
+# snapshot-persistent path under the user's .local tree via `uv tool
+# install`, exposing the binary at <bindir>/mem0-mcp-server. The .mcp.json
+# stdio entry points at this binary directly so Claude Code spawns it
+# as a subprocess at process start — bypassing the Node `undici`
+# DNS-cache-overflow failure that kills the streamable-HTTP transport
+# against api.mem0.ai (vade-runtime#36 class extended to non-MCP egress
+# in #109). Same egress as the failing transport, different wire: the
+# stdio server uses Python `httpx` for its REST hop, which is not
+# subject to undici's bug.
+#
+# Linux + macOS auto-install (uv is cross-platform). uv is required;
+# this function refuses if it can't find uv on PATH after the install
+# attempt. The Anthropic cloud image already has uv at
+# /root/.local/bin/uv; for local dev install via `curl -LsSf
+# https://astral.sh/uv/install.sh | sh` first.
+#
+# Tool dir is pinned to <bindir>/.. so the venv lives under the same
+# snapshot-persistent path as the binary symlink. Without an explicit
+# UV_TOOL_DIR, uv puts the venv under $XDG_DATA_HOME (typically
+# ~/.local/share/uv/) which on the cloud harness lives under /root/
+# and gets erased per resume.
+ensure_mem0_mcp_server() {
+  local bindir
+  bindir="$(_snapshot_user_bindir)"
+  case ":$PATH:" in
+    *":$bindir:"*) ;;
+    *) export PATH="$bindir:$PATH" ;;
+  esac
+
+  local version="${MEM0_MCP_SERVER_VERSION:-$MEM0_MCP_SERVER_VERSION_DEFAULT}"
+  local target="$bindir/mem0-mcp-server"
+
+  # Idempotent short-circuit. Don't re-install if the binary is already
+  # in place — uv tool install is non-trivial (resolves a ~50-package
+  # dep tree) and the snapshot has already paid that cost. Version-pin
+  # check is best-effort: there's no --version flag on this server, so
+  # we trust the symlink target.
+  if [ -x "$target" ]; then
+    log "mem0-mcp-server present: $target"
+    return 0
+  fi
+
+  if ! check_cmd uv; then
+    log "mem0-mcp-server: uv not on PATH; install it first (https://astral.sh/uv)"
+    return 1
+  fi
+
+  # uv tool install resolves and installs into UV_TOOL_DIR/<package>/
+  # and links console_scripts into UV_TOOL_BIN_DIR. Both must point at
+  # the snapshot-persistent tree.
+  local tool_dir="${bindir%/bin}/share/uv-tools"
+  mkdir -p "$tool_dir" "$bindir"
+
+  log "Installing mem0-mcp-server v${version} via uv tool → $target"
+  if ! UV_TOOL_DIR="$tool_dir" UV_TOOL_BIN_DIR="$bindir" \
+       uv tool install "mem0-mcp-server==${version}" >/dev/null 2>&1; then
+    log "mem0-mcp-server: uv tool install failed"
+    return 1
+  fi
+
+  if [ ! -x "$target" ]; then
+    log "mem0-mcp-server: install reported success but $target missing"
+    return 1
+  fi
+  log "Installed mem0-mcp-server v${version}"
 }
 
 # Expose gh on Claude Code's Bash-tool PATH every session.

@@ -347,6 +347,75 @@ echo "                            Harness github MCP is NOT for attributable wri
 echo "                            resolves inconsistently. See CLAUDE.md, MEMO 2026-04-24-08."
 echo "───────────────────────────────────────────────────────────────"
 
+# Mem0 read/write surface — same banner pattern as "GitHub write surface"
+# above. Per vade-runtime#109, the hosted Mem0 MCP at mcp.mem0.ai hits
+# the same Node `undici` DNS-cache-overflow class that kills github-coo,
+# so we run the official stdio server (`mem0-mcp-server`) as a local
+# subprocess instead. This block always prints — green when healthy,
+# loud ⚠ when degraded — so the agent sees Mem0 posture at turn zero
+# rather than only when integrity-check enumerates degraded invariants.
+# E5 in integrity-check.json is the canonical pass/fail signal.
+INTEGRITY_CHECK="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
+
+echo ""
+echo "───────────────────────────────────────────────────────────────"
+echo "Mem0 read/write surface"
+echo "───────────────────────────────────────────────────────────────"
+mem0_bin=""
+for cand in "/home/user/.local/bin/mem0-mcp-server" "$HOME/.local/bin/mem0-mcp-server"; do
+  if [ -x "$cand" ]; then mem0_bin="$cand"; break; fi
+done
+mem0_key="no"
+if [ -f "$SETTINGS_FILE" ] && check_cmd node; then
+  mem0_key="$(node -e '
+    try {
+      const cfg = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      console.log((cfg.env && cfg.env.MEM0_API_KEY) ? "yes" : "no");
+    } catch { console.log("no"); }
+  ' "$SETTINGS_FILE" 2>/dev/null || echo "no")"
+fi
+e5_status="unknown"
+e5_detail=""
+if [ -f "$INTEGRITY_CHECK" ] && check_cmd node; then
+  read -r e5_status e5_detail < <(node -e '
+    try {
+      const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const e = (r.groups && r.groups.E && r.groups.E.E5) || {};
+      let s = "unknown";
+      if (e.ok === true) s = "ok";
+      else if (e.ok === false) s = "degraded";
+      else if (e.skipped === true) s = "skip";
+      console.log(s + " " + (e.detail || "").replace(/\n/g, " "));
+    } catch { console.log("unknown"); }
+  ' "$INTEGRITY_CHECK" 2>/dev/null || echo "unknown")
+fi
+if [ -n "$mem0_bin" ]; then
+  printf "  %-25s %s\n" "stdio MCP binary:" "$mem0_bin"
+else
+  printf "  %-25s %s\n" "stdio MCP binary:" "MISSING (run ensure_mem0_mcp_server; cloud-setup.sh installs at build)"
+fi
+printf "  %-25s %s\n" "MEM0_API_KEY:" "settings.json env=$mem0_key"
+printf "  %-25s %s\n" "integrity-check E5:" "$e5_status"
+echo "  REST fallback (writes):   bin/mem0-rest.sh; canonical for memo_pointer (MEMO 2026-04-24-07)"
+case "$e5_status" in
+  degraded)
+    echo ""
+    echo "  ⚠ Mem0 MCP is degraded. CLAUDE.md §4 + §12 boot rituals (CB-* / OG-* identity"
+    echo "    load, recent-episodic handoff) cannot run via MCP this session. Fall back to"
+    echo "    durable file layer (coo/episodic_memory.md + memo_index.json) per CLAUDE.md §6"
+    echo "    graceful-degradation clause; for writes route through bin/mem0-rest.sh."
+    echo "    Detail: $e5_detail"
+    ;;
+  skip)
+    echo ""
+    echo "  Note: E5 probe was skipped — see detail above. Most common cause: MEM0_API_KEY"
+    echo "  not in this hook's process env even though settings.json carries it (MCP server"
+    echo "  spawn picks it up; the probe subprocess does not). Not a degradation; verify"
+    echo "  by listing mcp__mem0__* tools in your first agent turn."
+    ;;
+esac
+echo "───────────────────────────────────────────────────────────────"
+
 # Integrity check summary — the authoritative "did this session's boot
 # pipeline land correctly" verdict. session-start-sync.sh writes this
 # to $VADE_CLOUD_STATE_DIR/integrity-check.json on every boot. The file
@@ -356,7 +425,6 @@ echo "────────────────────────�
 # file themselves. Quorum-automation context: without this, routine
 # instances operated with less situational awareness than interactive
 # COO sessions (observed during quorum #3, PR #90).
-INTEGRITY_CHECK="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
 echo ""
 echo "───────────────────────────────────────────────────────────────"
 echo "Integrity check"

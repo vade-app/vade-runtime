@@ -112,6 +112,20 @@ else
   log "Warning: gh CLI install failed at build time; degraded-MCP sessions will fall through to venpopov attribution."
 fi
 
+# Install the mem0-mcp-server stdio binary. Same snapshot-persistence
+# rationale as op + gh — paying the install cost at build time means
+# the SessionStart hook chain never has to fetch through the egress
+# proxy, and Claude Code can spawn the MCP at process start without a
+# uvx-on-demand round-trip. Required for mem0 MCP availability per
+# vade-runtime#109; without it the .mcp.json stdio entry points at a
+# missing binary and Mem0 surface stays dark.
+if ensure_mem0_mcp_server; then
+  build_log_record OK "cloud-setup: mem0-mcp-server installed at build time"
+else
+  build_log_record WARN "cloud-setup: mem0-mcp-server install failed at build time; SessionStart hook will retry"
+  log "Warning: mem0-mcp-server install failed at build time; first session will boot with Mem0 MCP dark."
+fi
+
 # COO identity bootstrap runs only when OP_SERVICE_ACCOUNT_TOKEN is set
 # in the cloud environment config. Non-fatal on failure — the base VADE
 # env should still come up even if 1Password is unreachable.
