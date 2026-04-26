@@ -45,6 +45,10 @@ ensure_workspace_identity_link
 # MEMO 2026-04-23-02 gh-CLI fallback is callable without the agent
 # having to rediscover the install path every session.
 ensure_gh_symlink_on_path
+# Install the gh-coo-wrap wrapper so every attributable `gh` write
+# auto-carries the Claude Code session URL. MEMO 2026-04-26-02
+# (issue #150). Idempotent via marker grep.
+ensure_gh_coo_wrap "$SCRIPT_DIR/gh-coo-wrap.sh"
 # Emit integrity-check.json so its snapshot is on disk before the
 # digest hook runs (which may surface a one-line summary). Non-fatal.
 bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
