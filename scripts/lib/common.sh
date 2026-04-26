@@ -593,14 +593,27 @@ print_versions() {
 
 OP_VERSION_DEFAULT="2.31.0"
 GH_VERSION_DEFAULT="2.91.0"
-COO_AUTH_FP_EXPECTED="SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys"
-COO_SIGN_FP_EXPECTED="SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A"
+# Hardcoded production fingerprints; env-overridable so the bootstrap-
+# regression CI (.github/workflows/bootstrap-regression.yml) can
+# substitute fixture-key fingerprints without forking install_coo_ssh_keys.
+# Production paths leave these unset and fall through to the literals.
+COO_AUTH_FP_EXPECTED="${COO_AUTH_FP_EXPECTED:-SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys}"
+COO_SIGN_FP_EXPECTED="${COO_SIGN_FP_EXPECTED:-SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A}"
 
 # Snapshot-persistent user bindir. Cloud harness runs as root and the
 # /home/user/ tree survives snapshot → resume; local Mac has no
 # /home/user/ and runs as the operator's user, so $HOME/.local/bin is
 # the right target. Both ensure_op_cli and ensure_gh_cli install here.
+#
+# Env override: VADE_BINDIR_OVERRIDE lets the bootstrap-regression CI
+# point at a sandbox dir pre-populated with mock op/gh binaries so
+# ensure_*_cli short-circuits without touching /home/user/.local/bin.
+# Production paths leave it unset.
 _snapshot_user_bindir() {
+  if [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+    printf '%s' "$VADE_BINDIR_OVERRIDE"
+    return
+  fi
   if [ "$(id -u)" = "0" ] && [ -d /home/user ]; then
     printf '/home/user/.local/bin'
   else
@@ -1241,6 +1254,59 @@ write_coo_gitconfig() {
   fi
   git config --file "$gc" gpg.ssh.allowedSignersFile "${HOME}/.ssh/allowed_signers"
   git config --file "$gc" core.sshCommand "ssh -i ${HOME}/.ssh/vade-coo-auth -o IdentitiesOnly=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+}
+
+# Install the vade-coo git shim at the snapshot-persistent bindir,
+# making `git push` route through git-push-with-fallback.sh by default
+# (vade-runtime#67 adoption-as-default — the wrapper has been merged
+# since #74, but no path made it the default until this shim).
+#
+# The shim is a symlink to scripts/git-shim.sh in this repo. Removing
+# the symlink restores the system git. Set VADE_DISABLE_GIT_SHIM=1 in
+# the bootstrap env to skip installation entirely (useful for debug
+# sessions where intercepting git push is undesirable).
+#
+# Idempotent: if the symlink already points to the right source, no-op.
+# Fail-soft: refuses to clobber a non-symlink at the install path.
+install_coo_git_shim() {
+  if [ "${VADE_DISABLE_GIT_SHIM:-0}" = "1" ]; then
+    log "git shim install: skipped (VADE_DISABLE_GIT_SHIM=1)"
+    return 0
+  fi
+
+  local bindir shim_src wrapper shim_dst current_target
+  bindir="$(_snapshot_user_bindir)"
+  shim_src="$SCRIPT_DIR/git-shim.sh"
+  wrapper="$SCRIPT_DIR/git-push-with-fallback.sh"
+
+  if [ ! -x "$shim_src" ]; then
+    log_err "git shim install: source not executable at $shim_src; skipping"
+    return 1
+  fi
+  if [ ! -x "$wrapper" ]; then
+    log_err "git shim install: wrapper missing at $wrapper; shim would no-op, skipping"
+    return 1
+  fi
+
+  mkdir -p "$bindir"
+  shim_dst="$bindir/git"
+
+  if [ -e "$shim_dst" ] && [ ! -L "$shim_dst" ]; then
+    log_err "git shim install: $shim_dst exists and is not a symlink; refusing to clobber"
+    log_err "  remove it manually if you want the shim, or set VADE_DISABLE_GIT_SHIM=1"
+    return 1
+  fi
+
+  if [ -L "$shim_dst" ]; then
+    current_target="$(readlink -- "$shim_dst" 2>/dev/null || true)"
+    if [ "$current_target" = "$shim_src" ]; then
+      log "git shim install: already current at $shim_dst → $shim_src"
+      return 0
+    fi
+  fi
+
+  ln -sfn -- "$shim_src" "$shim_dst"
+  log "git shim installed at $shim_dst → $shim_src (intercepts \`git push\`; bypass with VADE_GIT_SHIM_BYPASS=1)"
 }
 
 validate_coo_identity() {

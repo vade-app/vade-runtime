@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Mock 1Password CLI for the bootstrap-regression suite (issue #86).
+#
+# Returns canned vade-coo-shaped responses for the subset of `op` calls
+# made by scripts/coo-bootstrap.sh (whoami + read of the four COO refs).
+# SSH key material is read from $VADE_CI_MOCK_KEYDIR/vade-coo-{auth,sign}{,.pub};
+# the runner generates fresh ed25519 keys per CI invocation and exports
+# their fingerprints as COO_AUTH_FP_EXPECTED / COO_SIGN_FP_EXPECTED so
+# install_coo_ssh_keys' fingerprint check passes.
+#
+# Real op CLI is never installed in the regression job — ensure_op_cli's
+# `check_cmd op` short-circuits because this mock is on PATH first
+# (VADE_BINDIR_OVERRIDE points at the dir holding this binary).
+#
+# Out-of-scope subcommands print a clear "[mock op]" diagnostic and exit
+# non-zero, so a bootstrap change that calls a new op subcommand fails
+# the regression visibly rather than silently passing.
+set -euo pipefail
+
+KEYDIR="${VADE_CI_MOCK_KEYDIR:-/tmp/vade-ci-mocks/keys}"
+
+case "${1:-}" in
+  --version)
+    echo "2.31.0 (vade-ci mock)"
+    exit 0
+    ;;
+  whoami)
+    echo "ServiceAccount: ci-mock-coo-bootstrap"
+    exit 0
+    ;;
+  read)
+    ref="${2:-}"
+    case "$ref" in
+      "op://COO/vade-coo-self-2026-04/token")
+        echo "ghp_CIMOCK00000000000000000000000000000000"
+        ;;
+      "op://COO/agentmail-vade-coo/credential")
+        echo "am_CIMOCK_AGENTMAIL_KEY_DO_NOT_USE"
+        ;;
+      "op://COO/mem0-vade-coo/credential")
+        echo "m0_CIMOCK_MEM0_KEY_DO_NOT_USE"
+        ;;
+      "op://COO/vade-coo-auth/private key")
+        cat "$KEYDIR/vade-coo-auth"
+        ;;
+      "op://COO/vade-coo-auth/public key")
+        cat "$KEYDIR/vade-coo-auth.pub"
+        ;;
+      "op://COO/vade-coo-sign/private key")
+        cat "$KEYDIR/vade-coo-sign"
+        ;;
+      "op://COO/vade-coo-sign/public key")
+        cat "$KEYDIR/vade-coo-sign.pub"
+        ;;
+      *)
+        echo "[mock op] unknown op:// ref: $ref" >&2
+        exit 2
+        ;;
+    esac
+    exit 0
+    ;;
+  *)
+    echo "[mock op] unhandled subcommand: $*" >&2
+    exit 2
+    ;;
+esac
