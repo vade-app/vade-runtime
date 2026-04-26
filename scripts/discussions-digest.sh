@@ -109,7 +109,7 @@ console.log("  • When in doubt, post in Q&A or Coordination. Asking is cheap."
 console.log("  • One thread = one topic. Link issues and PRs liberally.");
 console.log("");
 console.log("All discussions: https://github.com/vade-app/vade-core/discussions");
-console.log("Posting norms:   vade-coo-memory/context/agent-boot-discussions-check.md");
+console.log("Posting norms:   vade-coo-memory/coo/agent-boot-discussions-check.md");
 console.log("───────────────────────────────────────────────────────────────");
 ' "$RESPONSE" "$CURSOR" && PARSE_OK=1
 
