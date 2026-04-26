@@ -7,13 +7,13 @@
 # shapes and assert the augmented body appears (or doesn't, for
 # pass-through cases) where expected.
 #
-# Run: bash scripts/test-gh-coo-wrap.sh
+# Run: bash scripts/ci/test-gh-coo-wrap.sh
 # Exit: 0 if all assertions pass, non-zero otherwise.
 
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER="$SCRIPT_DIR/gh-coo-wrap.sh"
+WRAPPER="$SCRIPT_DIR/../gh-coo-wrap.sh"
 
 [ -x "$WRAPPER" ] || { echo "FAIL: wrapper not executable at $WRAPPER"; exit 1; }
 
