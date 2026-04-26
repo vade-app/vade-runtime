@@ -138,6 +138,14 @@ fetch_coo_secrets
 COO_BOOTSTRAP_STEP="write_coo_gitconfig"
 write_coo_gitconfig
 
+# Make `git push` route through git-push-with-fallback.sh by default
+# (vade-runtime#67 adoption-as-default). Non-fatal: if the install
+# refuses (e.g. user already has a custom $bindir/git), the bootstrap
+# continues. Pushes still work via system git; they just won't auto-
+# fallback when the cloud git-proxy 403s.
+COO_BOOTSTRAP_STEP="install_coo_git_shim"
+install_coo_git_shim || log "coo-bootstrap: git shim install skipped/failed; continuing"
+
 # Validate BEFORE merging into ~/.claude/settings.json (#66): a
 # wrong-identity PAT must never land in the harness's persistent env
 # block. fetch_coo_secrets stages secrets in ~/.vade/coo-env and exports
