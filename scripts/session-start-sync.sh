@@ -40,6 +40,14 @@ aggregate_workspace_claude_config "$WORKSPACE_ROOT_DERIVED" "$HOME/.claude" \
   vade-runtime vade-coo-memory vade-core
 ensure_workspace_mcp_config "$SCRIPT_DIR/../.mcp.json" "$WORKSPACE_ROOT_DERIVED/.mcp.json"
 ensure_workspace_identity_link "$WORKSPACE_ROOT_DERIVED/vade-coo-memory/CLAUDE.md" "$WORKSPACE_ROOT_DERIVED/CLAUDE.md"
+# Stale-snapshot fallback for the mem0 stdio MCP (vade-runtime#109).
+# cloud-setup.sh is the canonical installer; this catches snapshots
+# built before that change, or local dev environments where build-time
+# setup doesn't run. Idempotent — short-circuits when the binary is
+# already present. Failure is non-fatal: integrity-check E5 will
+# surface the gap loudly via the coo-identity-digest banner so the
+# next session triggers a /resume rather than wedging silently.
+ensure_mem0_mcp_server || true
 # Bridge /home/user/.local/bin/gh (persistent install target) onto
 # /root/.local/bin (already on PATH for Claude's Bash tool) so the
 # MEMO 2026-04-23-02 gh-CLI fallback is callable without the agent

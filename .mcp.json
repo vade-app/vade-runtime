@@ -1,10 +1,12 @@
 {
   "mcpServers": {
     "mem0": {
-      "type": "http",
-      "url": "https://mcp.mem0.ai/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MEM0_API_KEY}"
+      "type": "stdio",
+      "command": "/home/user/.local/bin/mem0-mcp-server",
+      "args": [],
+      "env": {
+        "MEM0_API_KEY": "${MEM0_API_KEY}",
+        "MEM0_DEFAULT_USER_ID": "ven"
       }
     },
     "agentmail": {
