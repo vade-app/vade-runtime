@@ -268,8 +268,8 @@ fi
 # JSON afterwards. CI skips E1-E4 entirely. E5 is a script-level probe
 # that doesn't require an agent — it spawns the stdio Mem0 MCP and
 # confirms the JSON-RPC handshake.
-_add E1 skip "requires-agent: call mcp__github__get_me"
-_add E2 skip "requires-agent: call mcp__github-coo__get_me"
+_add E1 skip "requires-agent: call mcp__github__get_me (note: harness github MCP writes deny-listed in #112; reads only)"
+_add E2 skip "github-coo MCP retired by Epic #112 Stream 1; vade-coo identity check is now \`gh auth status\` via Bash"
 _add E3 skip "requires-agent: inspect mcp-needs-auth-cache.json"
 _add E4 skip "requires-agent: observe tool namespaces"
 
