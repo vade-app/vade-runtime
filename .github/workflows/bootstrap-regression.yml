@@ -1,0 +1,87 @@
+name: Bootstrap regression
+
+# Layer-1 script-level CI for the cloud bootstrap chain.
+# Tracks vade-app/vade-runtime#86. Layer-2 (SDK-driven harness test)
+# lives at #85 and is out of scope here.
+#
+# What this catches that production currently catches via "open a fresh
+# Claude Code session and watch the digest":
+#   - #66 env-merge before validate
+#   - #72 cached-PAT recheck on marker shortcut
+#   - #73 digest path resolver
+#   - #83 settings.json env injection
+#
+# What it does NOT cover (Layer-2 territory):
+#   - Claude Code reading settings.json + loading skills + MCP startup
+#   - macOS local-setup.sh surface
+#   - Live 1Password / live GitHub PAT round-trips (mocked here)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - '.claude/**'
+      - '.mcp.json'
+      - 'versions.lock'
+      - 'Dockerfile'
+      - '.github/workflows/bootstrap-regression.yml'
+  workflow_dispatch:
+    inputs:
+      allowlist:
+        description: "Comma-separated invariant ids to tolerate as degraded"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: bootstrap-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run bootstrap-regression suite
+        id: run
+        env:
+          # Empty by default. Today's expected-degraded set:
+          #   - E1–E4: live MCP probes; integrity-check.sh marks them
+          #     "skip" in CI by design — never appear in degraded.
+          #   - F1–F4: culture-substrate invariants; skip cleanly when
+          #     vade-coo-memory is a stub without .git.
+          # Bump this if a new structural-but-known-yellow invariant
+          # lands; cite the reason in the commit message so the next
+          # operator can audit.
+          VADE_CI_ALLOWLIST: ${{ github.event.inputs.allowlist || '' }}
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/run-bootstrap-regression.sh" "$GITHUB_WORKSPACE"
+
+      - name: Post or update PR comment
+        if: always() && github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/post-or-update-pr-comment.sh"
+
+      - name: Upload integrity-check artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-regression-${{ github.run_id }}
+          path: |
+            /home/user/.vade-cloud-state/integrity-check.json
+            /home/user/.vade-cloud-state/setup-receipt.json
+            /home/user/.vade-cloud-state/build.log
+            /tmp/bootstrap-regression-summary.md
+            /tmp/bootstrap-regression-result.json
+          if-no-files-found: warn
+          retention-days: 14

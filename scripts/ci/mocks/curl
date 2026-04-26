@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Mock curl wrapper for the bootstrap-regression suite (issue #86).
+#
+# Intercepts requests to https://api.github.com/user — the endpoint
+# `validate_coo_identity` and `_cached_pat_still_valid` use to confirm
+# the cached PAT resolves to the vade-coo login — and returns a canned
+# vade-coo identity. Every other curl invocation forwards to the real
+# binary (op/gh download paths, ssh-keyscan fallbacks, etc.) so the
+# substrate stays representative.
+set -euo pipefail
+
+REAL_CURL="${VADE_CI_REAL_CURL:-/usr/bin/curl}"
+
+for arg in "$@"; do
+  case "$arg" in
+    https://api.github.com/user|https://api.github.com/user\?*)
+      cat <<'EOF'
+{"login":"vade-coo","id":278229580,"type":"User","name":"VADE COO (CI mock)"}
+EOF
+      exit 0
+      ;;
+  esac
+done
+
+exec "$REAL_CURL" "$@"

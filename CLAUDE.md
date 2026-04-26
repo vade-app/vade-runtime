@@ -55,3 +55,60 @@ See `versions.lock` for pinned tools.
 Next planned additions (deferred until needed): Rust toolchain via
 `rustup` when the first performance module lands, Python 3.12 when a
 canvas artifact needs scientific helpers.
+
+## Bootstrap CI
+
+PRs that touch `scripts/`, `.claude/`, `.mcp.json`, `versions.lock`,
+or `Dockerfile` trigger
+`.github/workflows/bootstrap-regression.yml`, which stages a
+cloud-style workspace under `/home/user`, runs `scripts/cloud-setup.sh`
++ `scripts/session-start-sync.sh` end-to-end in **fake-env mode**
+(PATH-shadowed `op` and `curl`-to-`api.github.com/user` mocks under
+`scripts/ci/mocks/`), then asserts the integrity-check report has no
+degraded invariants modulo the `VADE_CI_ALLOWLIST` env. Catches
+script-level regressions like #66, #72, #73, #83 at PR-open time
+without burning a Claude Code session per check. Tracked at #86.
+
+Layer-2 (SDK-driven harness load test) is sibling work at #85.
+This Layer-1 suite does not exercise Claude Code reading
+`settings.json`, MCP startup, skill loading, or live 1Password / GitHub
+PAT round-trips — those stay in the manual fresh-container ritual
+until #85 closes.
+
+What runs:
+1. `scripts/ci/run-bootstrap-regression.sh` stages
+   `$VADE_CI_WORKSPACE_ROOT/{vade-runtime,vade-coo-memory,vade-core}`
+   from the PR checkout (sibling repos are stubbed).
+2. Generates fixture ed25519 keys per run; their fingerprints are
+   exported as `COO_AUTH_FP_EXPECTED` / `COO_SIGN_FP_EXPECTED` so
+   `install_coo_ssh_keys` validates against the substituted material.
+3. Mocks `op` (returns canned vade-coo-shaped responses) and `curl`
+   (intercepts only `api.github.com/user`; other URLs forward).
+4. Provisions an isolated `$HOME` so the runner's `~/.gitconfig` /
+   `~/.claude` stay untouched.
+5. Runs `cloud-setup.sh` → `session-start-sync.sh` →
+   `integrity-check.sh`; reads `integrity-check.json`, applies
+   `VADE_CI_ALLOWLIST`, fails if anything degraded remains.
+6. Renders a per-group markdown table and posts/updates a sticky PR
+   comment (header marker `<!-- bootstrap-regression-comment -->`).
+
+Allowlist defaults to empty. E1–E4 (live MCP probes) skip in CI by
+design; F1–F4 (culture-substrate invariants) skip cleanly because
+the staged `vade-coo-memory` is a stub without `.git`. Bump the
+allowlist via the workflow's `VADE_CI_ALLOWLIST` env or the
+`workflow_dispatch` input — cite the reason in the commit so the
+next operator can audit.
+
+Local run (from a vade-runtime checkout, against a scratch workspace
+to avoid clobbering production /home/user):
+
+```sh
+VADE_CI_WORKSPACE_ROOT=/tmp/vade-ci-workspace \
+  bash scripts/ci/run-bootstrap-regression.sh "$PWD"
+```
+
+Smoke-test the suite itself by editing `cloud-setup.sh` /
+`session-start-sync.sh` to comment out a call like
+`ensure_workspace_identity_link` or `merge_coo_settings_env` — the
+runner should report the corresponding C1/D4 invariant as degraded
+and exit 1.

@@ -13,23 +13,32 @@
 # /home/user/ before this runs, so we just point at /home/user/vade-runtime.
 set -euo pipefail
 
-source /home/user/vade-runtime/scripts/lib/common.sh
+# Derive workspace root from script location so the bootstrap-regression
+# CI (.github/workflows/bootstrap-regression.yml) can stage a sandboxed
+# /tmp/<root>/vade-runtime tree without colliding with the production
+# /home/user/ working trees. In production both resolve to /home/user.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_ROOT="$(cd "$RUNTIME_DIR/.." && pwd)"
+
+# shellcheck source=lib/common.sh
+source "$RUNTIME_DIR/scripts/lib/common.sh"
 
 log "Cloud environment setup starting"
 build_log_record START "cloud-setup: begin"
 log "Baseline: node=$(node --version 2>/dev/null || echo 'missing') npm=$(npm --version 2>/dev/null || echo 'missing')"
 
 ensure_dirs
-sync_claude_config /home/user/vade-runtime/.claude
+sync_claude_config "$RUNTIME_DIR/.claude"
 # Aggregate per-repo primitives from data-owning repos into the
 # user-scope .claude/ via per-file symlinks. Per the data-ownership
 # rule (MEMO 2026-04-25-02), slash commands and skills live in the
 # repo whose data they manipulate; the aggregator surfaces them at
 # user-scope so they're invokable from any session cwd.
-aggregate_workspace_claude_config /home/user "$HOME/.claude" \
+aggregate_workspace_claude_config "$WORKSPACE_ROOT" "$HOME/.claude" \
   vade-runtime vade-coo-memory vade-core
-ensure_workspace_mcp_config
-ensure_workspace_identity_link
+ensure_workspace_mcp_config "$RUNTIME_DIR/.mcp.json" "$WORKSPACE_ROOT/.mcp.json"
+ensure_workspace_identity_link "$WORKSPACE_ROOT/vade-coo-memory/CLAUDE.md" "$WORKSPACE_ROOT/CLAUDE.md"
 
 # Validate the synced settings.json actually parses as JSON and has a
 # populated SessionStart:startup hook chain. File-exists alone would
@@ -55,13 +64,13 @@ if [ -f "$HOME/.claude/settings.json" ]; then
 fi
 
 WORKSPACE_MCP_SYMLINKED=false
-[ -L /home/user/.mcp.json ] && \
-  [ "$(readlink -f /home/user/.mcp.json 2>/dev/null)" = "$(readlink -f /home/user/vade-runtime/.mcp.json 2>/dev/null)" ] && \
+[ -L "$WORKSPACE_ROOT/.mcp.json" ] && \
+  [ "$(readlink -f "$WORKSPACE_ROOT/.mcp.json" 2>/dev/null)" = "$(readlink -f "$RUNTIME_DIR/.mcp.json" 2>/dev/null)" ] && \
   WORKSPACE_MCP_SYMLINKED=true
 
 IDENTITY_LINK_OK=false
-[ -L /home/user/CLAUDE.md ] && \
-  [ "$(readlink -f /home/user/CLAUDE.md 2>/dev/null)" = "$(readlink -f /home/user/vade-coo-memory/CLAUDE.md 2>/dev/null)" ] && \
+[ -L "$WORKSPACE_ROOT/CLAUDE.md" ] && \
+  [ "$(readlink -f "$WORKSPACE_ROOT/CLAUDE.md" 2>/dev/null)" = "$(readlink -f "$WORKSPACE_ROOT/vade-coo-memory/CLAUDE.md" 2>/dev/null)" ] && \
   IDENTITY_LINK_OK=true
 
 # Workspace deps (npm install vade-core, install tsx) are opt-in:
@@ -70,7 +79,7 @@ IDENTITY_LINK_OK=false
 # full local toolchain set VADE_BOOT_INSTALL=1.
 if [ "${VADE_BOOT_INSTALL:-0}" = "1" ]; then
   ensure_tsx
-  install_deps /home/user/vade-core
+  install_deps "$WORKSPACE_ROOT/vade-core"
 fi
 
 print_versions
@@ -120,7 +129,7 @@ COO_BOOTSTRAP_RAN=false
 if [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
   OP_TOKEN_VISIBLE=true
   build_log_record PROBE "cloud-setup: OP_SERVICE_ACCOUNT_TOKEN visible at setup time (len=${#OP_SERVICE_ACCOUNT_TOKEN})"
-  if bash /home/user/vade-runtime/scripts/coo-bootstrap.sh; then
+  if bash "$RUNTIME_DIR/scripts/coo-bootstrap.sh"; then
     COO_BOOTSTRAP_RAN=true
     build_log_record OK "cloud-setup: coo-bootstrap completed"
   else
@@ -135,7 +144,7 @@ fi
 # Durable receipt so sessions can diagnose build-time state without
 # parsing logs. coo-identity-digest surfaces this in the SessionStart
 # digest block.
-GIT_SHA="$(git -C /home/user/vade-runtime rev-parse --short HEAD 2>/dev/null || echo unknown)"
+GIT_SHA="$(git -C "$RUNTIME_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 build_receipt_write \
   built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   op_token_visible="$OP_TOKEN_VISIBLE" \
