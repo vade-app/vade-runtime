@@ -727,14 +727,13 @@ ensure_op_cli() {
 # into ${HOME}/.local/bin. Bindir resolution is shared with ensure_op_cli
 # via _snapshot_user_bindir.
 #
-# Rationale: vade-app/vade-runtime#36 documents the mcp__github-coo__*
-# streamable-HTTP transport failure ("DNS cache overflow") that forces
-# attribution to fall through to venpopov via mcp__github__* when the
-# MCP is degraded. `gh` authenticated with $GITHUB_MCP_PAT preserves
-# vade-coo opener attribution under the same PAT, via short-lived HTTPS
-# request/response cycles that bypass the failing transport. Same token,
-# same identity, different wire — MEMO 2026-04-22-04 attribution
-# invariant stays load-bearing even when the primary MCP is down.
+# Rationale: vade-runtime#36 documented the streamable-HTTP transport
+# failure ("DNS cache overflow") that motivated `gh` as a parallel path.
+# Epic #112 Stream 1 retired the github-coo MCP entirely; `gh` is now
+# the sole GitHub write path under vade-coo attribution. Authenticated
+# with $GITHUB_MCP_PAT via short-lived HTTPS request/response cycles —
+# same token, same identity, immune to the undici DNS-cache class.
+# MEMO-2026-04-22-04 attribution invariant remains load-bearing.
 ensure_gh_cli() {
   local bindir
   bindir="$(_snapshot_user_bindir)"

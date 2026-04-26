@@ -100,11 +100,11 @@ else
 fi
 
 # Install the gh CLI for the same reason: snapshot-persistent, no
-# per-resume fetch. Primary purpose is to give the COO a durable fallback
-# write path to GitHub under vade-coo attribution when mcp__github-coo__*
-# is degraded (see #36). Non-fatal: gh is not required for the base VADE
-# env to come up, only for degraded-MCP sessions to keep attribution
-# clean instead of falling through to venpopov.
+# per-resume fetch. Per Epic #112 Stream 1 (closing the cloud-boot
+# flake chapter), `gh` is now the canonical GitHub write path under
+# vade-coo attribution — the github-coo MCP transport was retired
+# because its `type: "http"` channel kept hitting Node `undici` DNS-
+# cache overflow (see #36, #109, MEMO-2026-04-24-08).
 if ensure_gh_cli; then
   build_log_record OK "cloud-setup: gh CLI installed at build time"
 else

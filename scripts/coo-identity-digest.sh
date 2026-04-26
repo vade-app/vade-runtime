@@ -343,8 +343,8 @@ else
   printf "  %-25s %s\n" "gh auth token:" "GITHUB_MCP_PAT unset — /resume or check coo-bootstrap"
 fi
 echo "  gh write path:            GH_TOKEN=\$GITHUB_MCP_PAT gh <cmd>  (attributes as vade-coo)."
-echo "                            Harness github MCP is NOT for attributable writes —"
-echo "                            resolves inconsistently. See CLAUDE.md, MEMO 2026-04-24-08."
+echo "                            Sole GitHub write path. github-coo MCP retired by"
+echo "                            Epic #112 Stream 1; harness github MCP writes deny-listed."
 echo "───────────────────────────────────────────────────────────────"
 
 # Mem0 read/write surface — same banner pattern as "GitHub write surface"
