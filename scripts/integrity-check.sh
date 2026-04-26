@@ -330,7 +330,7 @@ if [ -d "$F_REPO/.git" ] && check_cmd git; then
     # Paths this commit touched that are in scope.
     touched=$(git -C "$F_REPO" show --name-only --format= "$sha" 2>/dev/null \
       | grep -E '^(coo/|identity/|context/|CLAUDE\.md$)' \
-      | grep -vE '^coo/_drafts/|^coo/_archive/|^coo/retrospectives/|^coo/foundations/.*_transcript\.md$' \
+      | grep -vE '^coo/_drafts/|^coo/_archive/|^coo/_evidence/|^coo/retrospectives/|^coo/foundations/.*_transcript\.md$' \
       || true)
     [ -n "$touched" ] || continue
     f1_total=$((f1_total + 1))
