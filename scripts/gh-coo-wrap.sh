@@ -58,13 +58,39 @@ sid="${CLAUDE_CODE_REMOTE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 SESSION_URL=""
 [ -n "$sid" ] && SESSION_URL="https://claude.ai/code/session_${sid#cse_}"
 
+# is_covered <argv...>: returns 0 iff the (subcommand, action) pair
+# parsed from argv falls in the augment-eligible set. Skips leading
+# global flags so that e.g. `gh -R repo issue comment` is recognized
+# the same as `gh issue comment -R repo`. Value-taking global flags
+# in their separate-token form (`-R repo`, `--repo repo`,
+# `--hostname host`) consume the following arg; `--flag=value` and
+# boolean flags consume only themselves.
 is_covered() {
-  case "${1:-}" in
+  local sub="" act=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --) shift ;;
+      --*=*) shift ;;
+      -R|--repo|--hostname)
+        shift
+        [ $# -gt 0 ] && shift
+        ;;
+      -*) shift ;;
+      *)
+        if [ -z "$sub" ]; then
+          sub="$1"; shift
+        else
+          act="$1"; break
+        fi
+        ;;
+    esac
+  done
+  case "$sub" in
     pr)
-      case "${2:-}" in create|edit|comment|review) return 0 ;; esac
+      case "$act" in create|edit|comment|review) return 0 ;; esac
       ;;
     issue)
-      case "${2:-}" in create|edit|comment) return 0 ;; esac
+      case "$act" in create|edit|comment) return 0 ;; esac
       ;;
   esac
   return 1
@@ -88,7 +114,7 @@ augment() {
 }
 
 # Pass-through: no session URL OR not a covered subcommand.
-if [ -z "$SESSION_URL" ] || ! is_covered "${1:-}" "${2:-}"; then
+if [ -z "$SESSION_URL" ] || ! is_covered "$@"; then
   exec "$REAL_GH" "$@"
 fi
 

@@ -160,7 +160,46 @@ out="$(env -u CLAUDE_CODE_REMOTE_SESSION_ID -u CLAUDE_CODE_SESSION_ID \
        COO_GH_REAL="$WORK/gh-real" "$WRAPPER" pr create --title t --body "hi")"
 assert_not_contains "no session env: not augmented" "$out" "claude.ai/code/session_"
 
-# ---- TEST 16: real binary missing AND none on PATH — exit 127 ----
+# ---- TEST 16: -R <repo> before subcommand — augments ----
+out="$("$WRAPPER" -R vade-app/vade-coo-memory issue comment 1 --body "with -R")"
+assert_contains "-R before subcommand: issue comment augments" "$out" "$EXPECTED_URL"
+assert_contains "-R before subcommand: body preserved" "$out" "with -R"
+
+# ---- TEST 17: --repo <repo> before subcommand — augments ----
+out="$("$WRAPPER" --repo vade-app/vade-runtime pr comment 2 --body "with --repo")"
+assert_contains "--repo before subcommand: pr comment augments" "$out" "$EXPECTED_URL"
+
+# ---- TEST 18: --repo=<repo> (=value form) before subcommand — augments ----
+out="$("$WRAPPER" --repo=vade-app/vade-core issue create --title t --body "with --repo=")"
+assert_contains "--repo=value before subcommand: issue create augments" "$out" "$EXPECTED_URL"
+
+# ---- TEST 19: -R then pr review --body — augments ----
+out="$("$WRAPPER" -R vade-app/vade-runtime pr review 9 --request-changes --body "needs work")"
+assert_contains "-R before pr review --body: augments" "$out" "$EXPECTED_URL"
+
+# ---- TEST 20: -R then pr list — pass-through (uncovered subcommand) ----
+out="$("$WRAPPER" -R vade-app/vade-runtime pr list --state open)"
+assert_not_contains "-R before pr list: pass-through" "$out" "$EXPECTED_URL"
+
+# ---- TEST 21: -R then pr review --approve (no body) — pass-through ----
+out="$("$WRAPPER" -R vade-app/vade-runtime pr review 9 --approve)"
+assert_not_contains "-R before pr review --approve: no augmentation" "$out" "$EXPECTED_URL"
+
+# ---- TEST 22: -R interleaved (subcommand then -R then action) — augments ----
+out="$("$WRAPPER" issue -R vade-app/vade-runtime comment 1 --body "interleaved")"
+assert_contains "-R interleaved: issue comment augments" "$out" "$EXPECTED_URL"
+
+# ---- TEST 23: --hostname before subcommand — augments ----
+out="$("$WRAPPER" --hostname github.com issue comment 1 --body "with hostname")"
+assert_contains "--hostname before subcommand: augments" "$out" "$EXPECTED_URL"
+
+# ---- TEST 24: -R then --body-file — augments file content ----
+echo "from a file (with -R)" > "$WORK/body2.txt"
+out="$("$WRAPPER" -R vade-app/vade-coo-memory issue comment 1 --body-file "$WORK/body2.txt")"
+assert_contains "-R before --body-file: file content augmented" "$out" "$EXPECTED_URL"
+assert_contains "-R before --body-file: original content preserved" "$out" "from a file (with -R)"
+
+# ---- TEST 25: real binary missing AND none on PATH — exit 127 ----
 # Set PATH to dirs that don't contain gh so the fallback also fails.
 ec=0
 err="$(env -i PATH=/usr/bin:/bin HOME="$HOME" COO_GH_REAL=/nonexistent/path \
