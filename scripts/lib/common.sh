@@ -593,14 +593,27 @@ print_versions() {
 
 OP_VERSION_DEFAULT="2.31.0"
 GH_VERSION_DEFAULT="2.91.0"
-COO_AUTH_FP_EXPECTED="SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys"
-COO_SIGN_FP_EXPECTED="SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A"
+# Hardcoded production fingerprints; env-overridable so the bootstrap-
+# regression CI (.github/workflows/bootstrap-regression.yml) can
+# substitute fixture-key fingerprints without forking install_coo_ssh_keys.
+# Production paths leave these unset and fall through to the literals.
+COO_AUTH_FP_EXPECTED="${COO_AUTH_FP_EXPECTED:-SHA256:9vxJc6c69L8eaR6CvwdZoYDco24W6yN6GkKwnsm8Uys}"
+COO_SIGN_FP_EXPECTED="${COO_SIGN_FP_EXPECTED:-SHA256:pZeA8xycAtIsVGwhMzR3mg4KG05n9ksFuy4F1ZVXn3A}"
 
 # Snapshot-persistent user bindir. Cloud harness runs as root and the
 # /home/user/ tree survives snapshot → resume; local Mac has no
 # /home/user/ and runs as the operator's user, so $HOME/.local/bin is
 # the right target. Both ensure_op_cli and ensure_gh_cli install here.
+#
+# Env override: VADE_BINDIR_OVERRIDE lets the bootstrap-regression CI
+# point at a sandbox dir pre-populated with mock op/gh binaries so
+# ensure_*_cli short-circuits without touching /home/user/.local/bin.
+# Production paths leave it unset.
 _snapshot_user_bindir() {
+  if [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+    printf '%s' "$VADE_BINDIR_OVERRIDE"
+    return
+  fi
   if [ "$(id -u)" = "0" ] && [ -d /home/user ]; then
     printf '/home/user/.local/bin'
   else

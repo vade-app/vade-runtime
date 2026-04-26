@@ -38,8 +38,8 @@ sync_claude_config "$SCRIPT_DIR/../.claude"
 WORKSPACE_ROOT_DERIVED="$(cd "$SCRIPT_DIR/../.." && pwd)"
 aggregate_workspace_claude_config "$WORKSPACE_ROOT_DERIVED" "$HOME/.claude" \
   vade-runtime vade-coo-memory vade-core
-ensure_workspace_mcp_config
-ensure_workspace_identity_link
+ensure_workspace_mcp_config "$SCRIPT_DIR/../.mcp.json" "$WORKSPACE_ROOT_DERIVED/.mcp.json"
+ensure_workspace_identity_link "$WORKSPACE_ROOT_DERIVED/vade-coo-memory/CLAUDE.md" "$WORKSPACE_ROOT_DERIVED/CLAUDE.md"
 # Bridge /home/user/.local/bin/gh (persistent install target) onto
 # /root/.local/bin (already on PATH for Claude's Bash tool) so the
 # MEMO 2026-04-23-02 gh-CLI fallback is callable without the agent
