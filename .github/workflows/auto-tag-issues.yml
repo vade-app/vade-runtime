@@ -51,7 +51,8 @@ jobs:
   tag:
     # Skip bot-authored issues so the router can't retrigger itself
     # once agents start filing issues.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.issue.user.type != 'Bot' }}
+    # Also skip issues/PRs from vade-coo — vade-coo tags its own work properly.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.user.type != 'Bot' && github.event.issue.user.login != 'vade-coo') }}
     runs-on: ubuntu-latest
     steps:
       - name: Classify, label, and add to VADE project
