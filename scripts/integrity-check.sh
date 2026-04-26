@@ -285,11 +285,11 @@ _add E4 skip "requires-agent: observe tool namespaces"
 # coo-identity-digest banner highlights any E* failure in the degraded
 # block, so a degraded Mem0 surface is loud at SessionStart.
 #
-# Skip on CI (VADE_CI_ALLOWLIST will absorb it via the existing E*
-# allowlist convention) or when the binary truly cannot be tested
-# (no MEM0_API_KEY in env — the server won't accept initialize without
-# auth). Live-only invariant; not part of the bootstrap-regression
-# Layer-1 gate.
+# Skip on CI (bootstrap-regression runs in fake-env mode against a
+# mock workspace; live MCP probes can't validate there) and when the
+# binary truly cannot be tested (no MEM0_API_KEY in env — the server
+# won't accept initialize without auth). Live-only invariant; not part
+# of the bootstrap-regression Layer-1 gate.
 E5_ok=skip
 E5_detail="requires mem0-mcp-server binary + MEM0_API_KEY"
 _mem0_bin=""
@@ -300,7 +300,15 @@ for _candidate in "/home/user/.local/bin/mem0-mcp-server" "$HOME/.local/bin/mem0
   fi
 done
 
-if [ -z "$_mem0_bin" ]; then
+if [ -n "${VADE_CI_WORKSPACE_ROOT:-}" ] || [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+  # CI mode: bootstrap-regression stages a fake-env workspace and the
+  # live MCP install path is intentionally not exercised (would mean
+  # a 50-package uv install on every PR run for a probe that can't
+  # validate against the real api.mem0.ai anyway). Same shape as
+  # E1-E4 above; skip cleanly.
+  E5_ok=skip
+  E5_detail="skipped in CI fake-env (VADE_CI_WORKSPACE_ROOT or VADE_BINDIR_OVERRIDE set); live-only probe"
+elif [ -z "$_mem0_bin" ]; then
   E5_ok=false
   E5_detail="mem0-mcp-server binary missing; run ensure_mem0_mcp_server (cloud-setup.sh installs at build; session-start-sync.sh retries on resume)"
 elif [ -z "${MEM0_API_KEY:-}" ]; then
