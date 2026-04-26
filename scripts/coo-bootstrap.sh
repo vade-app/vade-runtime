@@ -157,7 +157,10 @@ COO_BOOTSTRAP_STEP="validate_coo_identity"
 validate_coo_identity
 
 COO_BOOTSTRAP_STEP="merge_coo_settings_env"
-merge_coo_settings_env
+# DELIBERATELY-BROKEN (validation of #99 red path; do NOT merge): skip
+# the env merge so settings.json never gets GITHUB_MCP_PAT et al.
+# Bootstrap-regression CI should report D4 degraded and exit red.
+# merge_coo_settings_env
 
 # Persist non-secret path state (VADE_CLOUD_STATE_DIR + PATH with the
 # snapshot user bindir prepended) into ~/.claude/settings.json env so
