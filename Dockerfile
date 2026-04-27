@@ -11,7 +11,8 @@ ARG USERNAME=node
 # build tools for any native npm deps, curl for debugging, procps for
 # tools like `ps` used by dev servers, openssh-client for git-over-ssh
 # and ssh-keygen fingerprint validation, unzip for the 1Password CLI
-# install path used by the COO identity bootstrap.
+# install path used by the COO identity bootstrap, python3 / python3-venv
+# for the uv-managed mem0-mcp-server install below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
       ca-certificates \
@@ -20,7 +21,58 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       procps \
       openssh-client \
       unzip \
+      python3 \
+      python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# 1Password CLI — pinned in versions.lock. Baked at image-build time so
+# the cloud snapshot-build path (cloud-setup.sh ensure_op_cli) and the
+# SessionStart fallback never have to fetch from cache.agilebits.com
+# mid-boot. Closes vade-runtime#111; advances epic #112 Stream 2
+# (zero-egress boot). cloud-setup.sh's existing presence-check
+# short-circuits when /usr/local/bin/op is on PATH.
+ARG OP_VERSION=2.31.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64|arm64) ;; *) echo "Unsupported arch: $arch" >&2; exit 1 ;; esac; \
+    tmp="$(mktemp -d)"; \
+    curl -fsSL --retry 5 --retry-delay 2 \
+      "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VERSION}/op_linux_${arch}_v${OP_VERSION}.zip" \
+      -o "$tmp/op.zip"; \
+    unzip -qo "$tmp/op.zip" -d "$tmp"; \
+    install -m 0755 "$tmp/op" /usr/local/bin/op; \
+    rm -rf "$tmp"; \
+    op --version
+
+# GitHub CLI — pinned in versions.lock. Same rationale as op:
+# image-build-time once, no per-snapshot or per-session fetch.
+# Required for COO attribution (`gh` is the canonical write path
+# under vade-coo since github-coo MCP retired in epic #112 Stream 1).
+ARG GH_VERSION=2.91.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    tmp="$(mktemp -d)"; \
+    curl -fsSL --retry 5 --retry-delay 2 \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" \
+      -o "$tmp/gh.tgz"; \
+    tar -xzf "$tmp/gh.tgz" -C "$tmp"; \
+    install -m 0755 "$tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf "$tmp"; \
+    gh --version
+
+# mem0-mcp-server stdio binary — pinned in versions.lock. uv-installed
+# globally so the .mcp.json command path resolves at /usr/local/bin
+# without a per-session uvx round-trip. Required for Mem0 MCP
+# availability per vade-runtime#109; without it the .mcp.json stdio
+# entry points at a missing binary and Mem0 surface stays dark.
+ARG MEM0_MCP_VERSION=0.2.1
+RUN set -eux; \
+    curl -fsSL https://astral.sh/uv/install.sh \
+      | env UV_INSTALL_DIR=/usr/local/bin sh; \
+    UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
+      /usr/local/bin/uv tool install --python python3 \
+      "mem0-mcp-server==${MEM0_MCP_VERSION}"; \
+    test -x /usr/local/bin/mem0-mcp-server
 
 # Claude Code CLI (global install). Pinned in versions.lock.
 # Install as root into /usr/local so all users can use it.

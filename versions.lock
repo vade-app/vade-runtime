@@ -28,6 +28,15 @@ gh                  2.91.0    # GitHub CLI. Fallback write path under
                               # fine-grained PAT as the MCP, via
                               # $GITHUB_MCP_PAT in GH_TOKEN. Pinned via
                               # GH_VERSION_DEFAULT in lib/common.sh.
+mem0-mcp-server     0.2.1     # Mem0 stdio MCP server. Required by
+                              # .mcp.json for Mem0 read/write surface
+                              # availability (vade-runtime#109,
+                              # MEMO-2026-04-26-16). Pinned via
+                              # MEM0_MCP_SERVER_VERSION_DEFAULT in
+                              # lib/common.sh. Installed via `uv tool`;
+                              # baked into the Dockerfile at
+                              # /usr/local/bin/mem0-mcp-server in epic
+                              # #112 Stream 2.
 
 # Globally installed via npm
 @anthropic-ai/claude-code 1.0.120  # Claude Code CLI. Pinned to the
