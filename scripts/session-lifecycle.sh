@@ -10,8 +10,9 @@
 # does the work via MCP tools.
 #
 # See vade-coo-memory/coo/mem0_sop.md for the full SOP.
-# See docs/briefings/003-claude-code-cross-session-state.md in
-# vade-core for the design rationale.
+# See vade-coo-memory/coo/briefings/003-claude-code-cross-session-state.md
+# for the design rationale (relocated from vade-core/docs/briefings/
+# per MEMO-2026-04-27-02).
 #
 # Graceful no-op if sourced libraries or node are missing; never
 # breaks session start or stop.
