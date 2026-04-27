@@ -88,15 +88,43 @@ print_versions
 # bootstrap fallback never has to fetch it through the egress proxy
 # mid-session. The binary lands in /home/user/.local/bin/op which
 # survives the snapshot → resume transition. Idempotent: if a prior
-# build already installed it, this is a no-op. Non-fatal: a failure
-# here just means the SessionStart hook will retry (same as before).
+# build (or the runtime Dockerfile, per epic #112 Stream 2) already
+# installed it, ensure_op_cli's presence-check short-circuits.
+#
+# FATAL on failure (closes vade-runtime#111). A snapshot without op is
+# degraded by definition: every session that resumes from it has to
+# re-fetch op from cache.agilebits.com mid-SessionStart, exposed to
+# the same egress flake the build-time install was supposed to absorb,
+# AND the COO identity load (op read … from the COO vault) cannot
+# proceed without it. Failing the build forces an immediate rebuild
+# rather than producing a session that's structurally guaranteed to
+# fail D-group invariants.
+#
+# Trade-off: cloud build SLA — if cache.agilebits.com is flapping,
+# build-fail-rate goes up. Mitigations: the 5-attempt retry budget in
+# ensure_op_cli (vade-runtime#76); the Dockerfile-baked /usr/local/bin/op
+# layer (epic #112 Stream 2) which makes ensure_op_cli a no-op when the
+# runtime image is in use. If neither is enough, follow-up work is
+# vade-runtime#111 option (b) — alternate origin / local mirror.
 OP_INSTALLED_AT_BUILD=false
 if ensure_op_cli; then
   OP_INSTALLED_AT_BUILD=true
   build_log_record OK "cloud-setup: op CLI installed at build time"
 else
-  build_log_record WARN "cloud-setup: op CLI install failed at build time; SessionStart hook will retry"
-  log "Warning: op CLI install failed at build time; SessionStart hook will retry."
+  build_log_record FAIL "cloud-setup: op CLI install failed at build time; failing build per vade-runtime#111 acceptance (a)"
+  log "FATAL: op CLI install failed at build time."
+  log "  Per vade-runtime#111 acceptance (a): a snapshot without op ships degraded;"
+  log "  SessionStart fallback would re-fetch the same flaky origin and likely fail"
+  log "  under the same egress window. Failing the build instead so the receipt is"
+  log "  never written with op_installed_at_build=false."
+  log "  Remediation: retry the build (cache.agilebits.com may have recovered),"
+  log "  or rebuild from a runtime image with op pre-baked (vade-runtime/Dockerfile,"
+  log "  epic #112 Stream 2)."
+  # Deliberately not writing setup-receipt.json — acceptance (a) is
+  # "receipt is never written with op_installed_at_build=false". The
+  # build.log FAIL line above is the diagnostic; the absent receipt
+  # signals the build did not land.
+  exit 1
 fi
 
 # Install the gh CLI for the same reason: snapshot-persistent, no
