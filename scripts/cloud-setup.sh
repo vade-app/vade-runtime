@@ -111,20 +111,17 @@ if ensure_op_cli; then
   OP_INSTALLED_AT_BUILD=true
   build_log_record OK "cloud-setup: op CLI installed at build time"
 else
-  build_log_record FAIL "cloud-setup: op CLI install failed at build time; failing build per vade-runtime#111 acceptance (a)"
-  log "FATAL: op CLI install failed at build time."
-  log "  Per vade-runtime#111 acceptance (a): a snapshot without op ships degraded;"
-  log "  SessionStart fallback would re-fetch the same flaky origin and likely fail"
-  log "  under the same egress window. Failing the build instead so the receipt is"
-  log "  never written with op_installed_at_build=false."
-  log "  Remediation: retry the build (cache.agilebits.com may have recovered),"
-  log "  or rebuild from a runtime image with op pre-baked (vade-runtime/Dockerfile,"
-  log "  epic #112 Stream 2)."
-  # Deliberately not writing setup-receipt.json — acceptance (a) is
-  # "receipt is never written with op_installed_at_build=false". The
-  # build.log FAIL line above is the diagnostic; the absent receipt
-  # signals the build did not land.
-  exit 1
+  build_log_record WARN "cloud-setup: op CLI install failed at build time; receipt will record op_installed_at_build=false"
+  log "Warning: op CLI install failed at build time; snapshot ships degraded."
+  log "  coo-identity-digest renders a ⚠ block at SessionStart when the receipt"
+  log "  shows op_installed_at_build=false, so the operator sees the degradation"
+  log "  loudly instead of mid-task. coo-bootstrap.sh re-runs ensure_op_cli at"
+  log "  SessionStart — different egress window than build time, may recover."
+  log "  Reverses #116's FATAL flip per BDFL: failing the build was over-strict"
+  log "  given that #119 showed the cloud sandbox doesn't actually use the"
+  log "  Dockerfile-baked /usr/local/bin/op, so the bake doesn't backstop a"
+  log "  cache.agilebits.com flake at snapshot-build time. Bootable-but-degraded"
+  log "  is strictly better than unbootable for diagnostic purposes."
 fi
 
 # Install the gh CLI for the same reason: snapshot-persistent, no
