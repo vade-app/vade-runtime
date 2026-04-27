@@ -37,6 +37,13 @@ mem0-mcp-server     0.2.1     # Mem0 stdio MCP server. Required by
                               # baked into the Dockerfile at
                               # /usr/local/bin/mem0-mcp-server in epic
                               # #112 Stream 2.
+uv                  0.11.7    # Python package/tool installer. Used
+                              # only as the bootstrap for
+                              # mem0-mcp-server above. Pinned to the
+                              # release tarball (not the install.sh
+                              # pipe) so image builds are reproducible.
+                              # Bump when a new mem0-mcp-server release
+                              # needs a newer uv, otherwise leave alone.
 
 # Globally installed via npm
 @anthropic-ai/claude-code 1.0.120  # Claude Code CLI. Pinned to the

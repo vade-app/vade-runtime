@@ -51,6 +51,7 @@ RUN set -eux; \
 ARG GH_VERSION=2.91.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64|arm64) ;; *) echo "Unsupported arch: $arch" >&2; exit 1 ;; esac; \
     tmp="$(mktemp -d)"; \
     curl -fsSL --retry 5 --retry-delay 2 \
       "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" \
@@ -60,6 +61,30 @@ RUN set -eux; \
     rm -rf "$tmp"; \
     gh --version
 
+# uv (Python package/tool installer) — pinned in versions.lock. Used
+# only as the installer for mem0-mcp-server below. Pulled from the
+# astral-sh GitHub release tarball (not `curl … | sh` from astral.sh)
+# so the version is reproducible and the build doesn't shell-pipe
+# whatever uv is current at image-build time. Same retry budget as op
+# and gh.
+ARG UV_VERSION=0.11.7
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) uv_arch="x86_64-unknown-linux-gnu" ;; \
+      arm64) uv_arch="aarch64-unknown-linux-gnu" ;; \
+      *) echo "Unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    tmp="$(mktemp -d)"; \
+    curl -fsSL --retry 5 --retry-delay 2 \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" \
+      -o "$tmp/uv.tgz"; \
+    tar -xzf "$tmp/uv.tgz" -C "$tmp"; \
+    install -m 0755 "$tmp/uv-${uv_arch}/uv" /usr/local/bin/uv; \
+    install -m 0755 "$tmp/uv-${uv_arch}/uvx" /usr/local/bin/uvx; \
+    rm -rf "$tmp"; \
+    uv --version
+
 # mem0-mcp-server stdio binary — pinned in versions.lock. uv-installed
 # globally so the .mcp.json command path resolves at /usr/local/bin
 # without a per-session uvx round-trip. Required for Mem0 MCP
@@ -67,8 +92,6 @@ RUN set -eux; \
 # entry points at a missing binary and Mem0 surface stays dark.
 ARG MEM0_MCP_VERSION=0.2.1
 RUN set -eux; \
-    curl -fsSL https://astral.sh/uv/install.sh \
-      | env UV_INSTALL_DIR=/usr/local/bin sh; \
     UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
       /usr/local/bin/uv tool install --python python3 \
       "mem0-mcp-server==${MEM0_MCP_VERSION}"; \
