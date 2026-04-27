@@ -273,17 +273,30 @@ _add E2 skip "github-coo MCP retired by Epic #112 Stream 1; vade-coo identity ch
 _add E3 skip "requires-agent: inspect mcp-needs-auth-cache.json"
 _add E4 skip "requires-agent: observe tool namespaces"
 
-# E5: stdio Mem0 MCP server is installed and answers initialize.
-# The hosted https://mcp.mem0.ai endpoint hits a Node `undici` DNS-cache
-# overflow inside Claude Code's MCP HTTP transport on cloud-harness
-# boots (vade-runtime#36/#109), leaving the agent with no Mem0 surface
-# for the rest of the session. We bypass that by running the official
+# E5: stdio Mem0 MCP server is installed, answers initialize, AND
+# completes a real tool round-trip against api.mem0.ai. The hosted
+# https://mcp.mem0.ai endpoint hits a Node `undici` DNS-cache overflow
+# inside Claude Code's MCP HTTP transport on cloud-harness boots
+# (vade-runtime#36/#109), leaving the agent with no Mem0 surface for
+# the rest of the session. We bypass that by running the official
 # stdio MCP server (`mem0-mcp-server`, pinned via common.sh) as a
-# subprocess. This probe is the on-disk + handshake gate: if the binary
-# is missing OR the JSON-RPC initialize fails OR the tool list is
-# missing the read/write surface we depend on, mark E5 false. The
-# coo-identity-digest banner highlights any E* failure in the degraded
-# block, so a degraded Mem0 surface is loud at SessionStart.
+# subprocess.
+#
+# This probe layers two checks (per vade-runtime#114):
+#   1. Transport — the binary spawns and answers initialize +
+#      tools/list with the read/write tool surface we depend on.
+#      Fast failure mode: missing binary, no MEM0_API_KEY, JSON-RPC
+#      timeout, missing tool names.
+#   2. API reachability — a real tools/call get_memories round-trip
+#      that exercises api.mem0.ai. Without this, an
+#      api.mem0.ai 503 ("DNS cache overflow") leaves initialize
+#      passing while every actual tool call errors with
+#      "Expecting value: line 1 column 1 (char 0)" — a misleading
+#      green that defeats the point of `summary.ok`.
+#
+# Verdict ordering: handshake failure > round-trip failure > ok. The
+# coo-identity-digest banner highlights any E* failure in the
+# degraded block, so a degraded Mem0 surface is loud at SessionStart.
 #
 # Skip on CI (bootstrap-regression runs in fake-env mode against a
 # mock workspace; live MCP probes can't validate there) and when the
@@ -322,11 +335,15 @@ elif ! check_cmd timeout || ! check_cmd node; then
   E5_ok=skip
   E5_detail="timeout or node missing; cannot probe"
 else
-  # Send initialize + initialized notification + tools/list, then read
-  # responses with a tight timeout. The server emits one JSON-RPC line
-  # per response on stdout. Success criteria: line 1 has
-  # result.serverInfo.name == "mem0", and tools list contains
-  # get_memories + search_memories + add_memory.
+  # Send initialize + initialized notification + tools/list +
+  # tools/call get_memories, then read responses with a budgeted
+  # timeout. The server emits one JSON-RPC line per response on
+  # stdout. Success criteria:
+  #   id=1 → result.serverInfo.name == "mem0"
+  #   id=2 → result.tools contains get_memories + search_memories + add_memory
+  #   id=3 → result returned without isError; round-trip to api.mem0.ai ok
+  # Cheap filter: user_id="coo" with page_size=1 — tiny namespace,
+  # one record, one network round-trip.
   E5_probe_out="$(
     {
       printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"integrity-check","version":"1.0"}}}'
@@ -334,9 +351,11 @@ else
       printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
       sleep 0.1
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-      sleep 1.5
-    } | MEM0_API_KEY="$MEM0_API_KEY" timeout 6 "$_mem0_bin" 2>/dev/null \
-      | head -3
+      sleep 0.5
+      printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_memories","arguments":{"filters":{"AND":[{"user_id":"coo"}]},"page":1,"page_size":1}}}'
+      sleep 3
+    } | MEM0_API_KEY="$MEM0_API_KEY" timeout 10 "$_mem0_bin" 2>/dev/null \
+      | head -4
   )"
   E5_verdict="$(printf '%s' "$E5_probe_out" | node -e '
     let data = "";
@@ -345,20 +364,36 @@ else
       const lines = data.split("\n").filter(Boolean);
       let serverName = null;
       let toolNames = [];
+      let roundTripOk = false;
+      let roundTripError = null;
       for (const l of lines) {
         try {
           const m = JSON.parse(l);
           if (m.id === 1 && m.result?.serverInfo?.name) serverName = m.result.serverInfo.name;
           if (m.id === 2 && Array.isArray(m.result?.tools)) toolNames = m.result.tools.map(t => t.name);
+          if (m.id === 3) {
+            if (m.error) {
+              roundTripError = (m.error.message || JSON.stringify(m.error)).slice(0, 160);
+            } else if (m.result?.isError) {
+              const txt = m.result.content?.[0]?.text || JSON.stringify(m.result.content || m.result);
+              roundTripError = ("isError: " + txt).slice(0, 160);
+            } else if (m.result) {
+              roundTripOk = true;
+            }
+          }
         } catch {}
       }
       const required = ["get_memories", "search_memories", "add_memory"];
       const missing = required.filter(n => !toolNames.includes(n));
+      const handshakeOk = serverName === "mem0" && missing.length === 0;
       const out = {
         serverName,
         toolCount: toolNames.length,
         missing,
-        ok: serverName === "mem0" && missing.length === 0,
+        handshakeOk,
+        roundTripOk,
+        roundTripError,
+        ok: handshakeOk && roundTripOk,
       };
       process.stdout.write(JSON.stringify(out));
     });
@@ -367,13 +402,21 @@ else
   if [ -n "$E5_verdict" ] && printf '%s' "$E5_verdict" | grep -q '"ok":true'; then
     E5_ok=true
     E5_tools="$(printf '%s' "$E5_verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const o=JSON.parse(d);process.stdout.write(o.toolCount+"")}catch{process.stdout.write("?")}})' 2>/dev/null || echo "?")"
-    E5_detail="stdio Mem0 MCP healthy: $_mem0_bin (initialize ok, $E5_tools tools)"
+    E5_detail="stdio Mem0 MCP healthy: $_mem0_bin (handshake ok, $E5_tools tools, get_memories round-trip ok)"
   else
     E5_ok=false
     if [ -z "$E5_probe_out" ]; then
-      E5_detail="$_mem0_bin spawned but produced no JSON-RPC output in 6s; check MEM0_API_KEY validity, network egress to api.mem0.ai, and 'cat \$E5_probe_out_path' for any stderr"
-    else
+      E5_detail="$_mem0_bin spawned but produced no JSON-RPC output in 10s; check MEM0_API_KEY validity, network egress to api.mem0.ai (curl https://api.mem0.ai/v1/ping/), and stderr"
+    elif [ -z "$E5_verdict" ]; then
+      E5_detail="$_mem0_bin probe parser produced no verdict; raw: $(printf '%s' "$E5_probe_out" | head -c 240)"
+    elif printf '%s' "$E5_verdict" | grep -q '"handshakeOk":false'; then
       E5_detail="$_mem0_bin handshake failed: $(printf '%s' "$E5_verdict" | head -c 240)"
+    else
+      # Handshake passed but round-trip failed: api.mem0.ai is degraded
+      # while the local MCP transport is up. This is the misleading-green
+      # case from vade-runtime#114; surface it explicitly.
+      _e5_rt_err="$(printf '%s' "$E5_verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const o=JSON.parse(d);process.stdout.write(o.roundTripError||"(no error string)")}catch{process.stdout.write("(verdict parse failed)")}})' 2>/dev/null || echo "(node parse failed)")"
+      E5_detail="api.mem0.ai unreachable: handshake ok but get_memories round-trip failed — $_e5_rt_err. Probe: curl https://api.mem0.ai/v1/ping/ ; if 503/DNS-cache-overflow, defer Mem0 writes (memo-sync, identity loads) until upstream recovers."
     fi
   fi
 fi
