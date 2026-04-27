@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# PostToolUse Bash hook: auto-subscribe to PR activity after `gh pr create`.
+#
+# Reads hook input JSON on stdin, detects whether the bash command was a
+# `gh pr create`, parses the PR URL from the tool response, and emits an
+# additionalContext system reminder instructing the next turn to call
+# mcp__github__subscribe_pr_activity. PR subscriptions are session-scoped
+# to the model, so a shell-side call cannot register one — the model must
+# issue the MCP call itself, hence the context-injection design.
+#
+# Always exits 0; no-ops cleanly on non-matching commands or unparsable
+# output so a misclassification can never block tool execution.
+
+set -uo pipefail
+
+input="$(cat 2>/dev/null || true)"
+[ -z "$input" ] && exit 0
+
+cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+case "$cmd" in
+  *"gh pr create"*) ;;
+  *) exit 0 ;;
+esac
+
+blob="$(printf '%s' "$input" | jq -r '.tool_response | tostring' 2>/dev/null || true)"
+url="$(printf '%s' "$blob" | grep -oE 'https://github\.com/[^/[:space:]"\\]+/[^/[:space:]"\\]+/pull/[0-9]+' | head -1 || true)"
+[ -z "$url" ] && exit 0
+
+owner="$(printf '%s' "$url" | sed -E 's|.*github\.com/([^/]+)/.*|\1|')"
+repo="$(printf '%s' "$url" | sed -E 's|.*github\.com/[^/]+/([^/]+)/pull/[0-9]+.*|\1|')"
+pn="$(printf '%s' "$url" | sed -E 's|.*/pull/([0-9]+).*|\1|')"
+
+if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$pn" ]; then
+  exit 0
+fi
+case "$pn" in *[!0-9]*|'') exit 0 ;; esac
+
+jq -n --arg owner "$owner" --arg repo "$repo" --argjson pn "$pn" '{
+  hookSpecificOutput: {
+    hookEventName: "PostToolUse",
+    additionalContext: ("[auto-subscribe-pr] A pull request was just created at " + $owner + "/" + $repo + "#" + ($pn|tostring) + ". Call mcp__github__subscribe_pr_activity with owner=\"" + $owner + "\", repo=\"" + $repo + "\", pullNumber=" + ($pn|tostring) + " now so CI failures, comments, and reviews on this PR are delivered into this session as github-webhook-activity events. Do this silently in your next tool batch — do not narrate it.")
+  }
+}'
