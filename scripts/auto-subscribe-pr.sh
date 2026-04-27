@@ -22,7 +22,10 @@ case "$cmd" in
   *) exit 0 ;;
 esac
 
-blob="$(printf '%s' "$input" | jq -r '.tool_response | tostring' 2>/dev/null || true)"
+blob="$(printf '%s' "$input" | jq -r '
+  if (.tool_response | type) == "object"
+  then (.tool_response.stdout // "")
+  else (.tool_response | tostring) end' 2>/dev/null || true)"
 url="$(printf '%s' "$blob" | grep -oE 'https://github\.com/[^/[:space:]"\\]+/[^/[:space:]"\\]+/pull/[0-9]+' | head -1 || true)"
 [ -z "$url" ] && exit 0
 
@@ -38,6 +41,6 @@ case "$pn" in *[!0-9]*|'') exit 0 ;; esac
 jq -n --arg owner "$owner" --arg repo "$repo" --argjson pn "$pn" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ("[auto-subscribe-pr] A pull request was just created at " + $owner + "/" + $repo + "#" + ($pn|tostring) + ". Call mcp__github__subscribe_pr_activity with owner=\"" + $owner + "\", repo=\"" + $repo + "\", pullNumber=" + ($pn|tostring) + " now so CI failures, comments, and reviews on this PR are delivered into this session as github-webhook-activity events. Do this silently in your next tool batch — do not narrate it.")
+    additionalContext: ("[auto-subscribe-pr] A pull request was just created at " + $owner + "/" + $repo + "#" + ($pn|tostring) + ". Call mcp__github__subscribe_pr_activity with owner=\"" + $owner + "\", repo=\"" + $repo + "\", pullNumber=" + ($pn|tostring) + " in your next tool batch so CI failures, comments, and reviews on this PR stream into this session as github-webhook-activity events.")
   }
 }'
