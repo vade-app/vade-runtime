@@ -1,0 +1,187 @@
+{
+  "_comment": "Redaction patterns applied to Claude Code session transcripts before commit/upload. Order matters — longer/more-structured shapes first, prefixed shapes next, generic JWT, then entropy fallback. See vade-app/vade-agent-logs#64 design comment + security review.",
+  "version": 1,
+  "patterns": [
+    {
+      "id": "gcp-pem",
+      "regex": "-----BEGIN PRIVATE KEY-----[\\s\\S]*?-----END PRIVATE KEY-----",
+      "replacement": "[REDACTED:gcp-pem]",
+      "secret_var": null,
+      "notes": "GCP service-account private-key block. Apply before generic SSH/PEM."
+    },
+    {
+      "id": "ssh-private",
+      "regex": "-----BEGIN (?:RSA |OPENSSH |EC |DSA |ENCRYPTED |)PRIVATE KEY-----[\\s\\S]*?-----END [^-]+PRIVATE KEY-----",
+      "replacement": "[REDACTED:ssh-private]",
+      "secret_var": null,
+      "notes": "Catches OpenSSH and PEM variants. Multiline non-greedy."
+    },
+    {
+      "id": "op-token",
+      "regex": "\\bops_eyJ[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+){0,3}\\b",
+      "replacement": "[REDACTED:op-token]",
+      "secret_var": null,
+      "notes": "1Password service-account token. Defensive: the harness env carries OP_SERVICE_ACCOUNT_TOKEN at boot but fetch_coo_secrets does not re-export it (the harness owns it directly). Apply before generic JWT — ops_ prefix carries an embedded JWT-shaped payload that would otherwise match the JWT pattern."
+    },
+    {
+      "id": "anthropic-key",
+      "regex": "\\bsk-ant-(?:api|admin|sid)\\d{2}-[A-Za-z0-9_-]{86,}\\b",
+      "replacement": "[REDACTED:anthropic-key]",
+      "secret_var": null,
+      "notes": "Anthropic API keys. Critical class for a Claude-running shop. Pattern covers api/admin/sid variants with 2-digit version. Defensive: not currently in fetch_coo_secrets, but lands in transcripts via stray Bash output / WebFetch / colleague-paste paths."
+    },
+    {
+      "id": "openai-key",
+      "regex": "\\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}\\b",
+      "replacement": "[REDACTED:openai-key]",
+      "secret_var": null,
+      "notes": "OpenAI API keys, current and project-scoped formats."
+    },
+    {
+      "id": "gh-fine-pat",
+      "regex": "\\bgithub_pat_[A-Za-z0-9_]{82,}\\b",
+      "replacement": "[REDACTED:gh-fine-pat]",
+      "secret_var": ["GITHUB_MCP_PAT", "GITHUB_TOKEN"],
+      "notes": "GitHub fine-grained PAT. 11-char prefix + 82 chars (verified against live PAT length 93). Spec is exact 82, but using {82,} so over-long anomalous strings (e.g. corpus typos, future format extensions) still redact rather than slip through into commit."
+    },
+    {
+      "id": "gh-classic-pat",
+      "regex": "\\bghp_[A-Za-z0-9]{36}\\b",
+      "replacement": "[REDACTED:gh-classic-pat]",
+      "secret_var": null,
+      "notes": "GitHub classic PAT, 40 chars total."
+    },
+    {
+      "id": "gh-oauth-u2s",
+      "regex": "\\bghu_[A-Za-z0-9]{36}\\b",
+      "replacement": "[REDACTED:gh-oauth-u2s]",
+      "secret_var": null,
+      "notes": "GitHub OAuth user-to-server token."
+    },
+    {
+      "id": "gh-oauth-s2s",
+      "regex": "\\bghs_[A-Za-z0-9]{36}\\b",
+      "replacement": "[REDACTED:gh-oauth-s2s]",
+      "secret_var": null,
+      "notes": "GitHub OAuth server-to-server token."
+    },
+    {
+      "id": "gh-oauth-refresh",
+      "regex": "\\bghr_[A-Za-z0-9]{36}\\b",
+      "replacement": "[REDACTED:gh-oauth-refresh]",
+      "secret_var": null,
+      "notes": "GitHub OAuth refresh token."
+    },
+    {
+      "id": "mem0-key",
+      "regex": "\\bm0-[A-Za-z0-9]{40,}\\b",
+      "replacement": "[REDACTED:mem0-key]",
+      "secret_var": "MEM0_API_KEY",
+      "notes": "Mem0 API key. Live key length observed at 43 chars."
+    },
+    {
+      "id": "agentmail-key",
+      "regex": "\\bagentmail[_-]?[A-Za-z0-9_-]{60,}\\b",
+      "replacement": "[REDACTED:agentmail-key]",
+      "secret_var": "AGENTMAIL_API_KEY",
+      "notes": "AgentMail API key (length 76 per coo-bootstrap.sh). Prefix unverified — refine when shape known."
+    },
+    {
+      "id": "stripe-key",
+      "regex": "\\b(?:sk|rk)_live_[A-Za-z0-9]{24,}\\b",
+      "replacement": "[REDACTED:stripe-key]",
+      "secret_var": null,
+      "notes": "Stripe secret + restricted live keys."
+    },
+    {
+      "id": "slack-token",
+      "regex": "\\bxox[abprs]-\\d+-\\d+-\\d+-[a-fA-F0-9]+\\b",
+      "replacement": "[REDACTED:slack-token]",
+      "secret_var": null,
+      "notes": "Slack bot/user/workspace tokens."
+    },
+    {
+      "id": "slack-webhook",
+      "regex": "https://hooks\\.slack\\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+",
+      "replacement": "[REDACTED:slack-webhook]",
+      "secret_var": null,
+      "notes": "Slack incoming-webhook URLs."
+    },
+    {
+      "id": "discord-webhook",
+      "regex": "https://discord(?:app)?\\.com/api/webhooks/\\d+/[\\w-]+",
+      "replacement": "[REDACTED:discord-webhook]",
+      "secret_var": null,
+      "notes": "Discord incoming-webhook URLs."
+    },
+    {
+      "id": "hf-token",
+      "regex": "\\bhf_[A-Za-z0-9]{34,}\\b",
+      "replacement": "[REDACTED:hf-token]",
+      "secret_var": null,
+      "notes": "HuggingFace user/access token."
+    },
+    {
+      "id": "npm-token",
+      "regex": "\\bnpm_[A-Za-z0-9]{36}\\b",
+      "replacement": "[REDACTED:npm-token]",
+      "secret_var": null,
+      "notes": "npm publish token."
+    },
+    {
+      "id": "pypi-token",
+      "regex": "\\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}\\b",
+      "replacement": "[REDACTED:pypi-token]",
+      "secret_var": null,
+      "notes": "PyPI API token (Macaroon-shape)."
+    },
+    {
+      "id": "gcp-refresh",
+      "regex": "\\b1//[A-Za-z0-9_-]{60,}\\b",
+      "replacement": "[REDACTED:gcp-refresh]",
+      "secret_var": null,
+      "notes": "GCP OAuth refresh token shape."
+    },
+    {
+      "id": "aws-akid",
+      "regex": "\\bAKIA[A-Z0-9]{16}\\b",
+      "replacement": "[REDACTED:aws-akid]",
+      "secret_var": null,
+      "notes": "AWS access-key id, 20 chars."
+    },
+    {
+      "id": "aws-secret",
+      "regex": "(?i)(aws_secret_access_key\\s*[=:]\\s*)[A-Za-z0-9/+]{40}",
+      "replacement": "\\g<1>[REDACTED:aws-secret]",
+      "secret_var": null,
+      "notes": "AWS secret access key, kv-anchored to avoid the over-broad raw-40-char-base64 false-positive class."
+    },
+    {
+      "id": "auth-header",
+      "regex": "(?i)(authorization:\\s*(?:bearer|basic|token)\\s+)[A-Za-z0-9._\\-+/=]{20,}",
+      "replacement": "\\g<1>[REDACTED:auth-header]",
+      "secret_var": null,
+      "notes": "Generic Authorization header, kv-anchored. Catches anything tokenized over HTTP that hits a transcript via curl -v."
+    },
+    {
+      "id": "jwt",
+      "regex": "\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\b",
+      "replacement": "[REDACTED:jwt]",
+      "secret_var": null,
+      "notes": "Generic JWT. Apply AFTER op-token (which has a JWT-shaped payload after ops_ prefix)."
+    }
+  ],
+  "entropy_fallback": {
+    "enabled": true,
+    "min_length": 32,
+    "min_entropy_bits_per_char": 4.5,
+    "charset": "A-Za-z0-9_/+=.\\-",
+    "replacement": "[REDACTED:high-entropy]",
+    "notes": "Shannon-entropy safety net for unknown-shape tokens (third-party-emitted secrets that don't go through fetch_coo_secrets and aren't covered by a registered pattern). Tolerates false positives — they are a redaction-pipeline-safe failure mode."
+  },
+  "thinking_block": {
+    "enabled": true,
+    "replacement_template": "[REDACTED:thinking-block:{length}-chars]",
+    "notes": "Wholesale redaction of <thinking> block content. Reasoning often re-states secrets the model decided not to print to user-visible output, and adoption analysis only needs the *fact* of thinking + its length. Targets JSON objects shaped {type: 'thinking', text: '...'} in assistant.message.content[]; preserves event structure and signature field."
+  }
+}
