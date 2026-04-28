@@ -159,10 +159,15 @@ def main() -> int:
             "exported_at", "events_processed",
             "bytes_pre_redaction", "bytes_post_redaction",
             "bytes_post_gzip", "bytes_ciphertext", "ciphertext_sha256",
-            "redaction_hits", "r2", "age_recipient_file",
+            "redaction_hits", "r2",
+            "age_recipient_file", "age_recipient_pubkey",
         ):
             if key not in meta:
                 fail(f"sidecar missing key: {key} (got {sorted(meta.keys())})")
+
+        pubkey = meta["age_recipient_pubkey"]
+        if not (isinstance(pubkey, str) and pubkey.startswith("age1") and len(pubkey) >= 50):
+            fail(f"age_recipient_pubkey not a plausible age v1 pubkey: {pubkey!r}")
 
         if meta["session_id"] != sid:
             fail(f"session_id mismatch: {meta['session_id']!r} != {sid!r}")

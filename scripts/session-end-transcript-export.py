@@ -32,6 +32,15 @@ to where the meta.json would have gone, so the absence of meta.json +
 presence of export-error.txt is the operator-visible "this hook
 fired but couldn't complete" signal.
 
+First-run cost note: on a fresh container the first invocation pays
+~5–10s for uv to resolve+download boto3 (PEP 723 inline deps), plus
+~1–2s for `op read` of endpoint+bucket and ~1–2s for the boto3 import.
+Subsequent invocations in the same container hit the uv cache and
+warm imports — typically sub-second beyond the redact-engine work.
+Acceptable for a Stop hook (operator perceives session-end as already
+"the slow part"); flagged here so an operator who notices the pause
+on first session knows it's expected, not stuck.
+
 Required env (sourced from ~/.vade/coo-env by the bash wrapper):
   R2_TRANSCRIPTS_ACCESS_KEY_ID      — R2 API token access key (32 hex)
   R2_TRANSCRIPTS_SECRET_ACCESS_KEY  — R2 API token secret key (64 hex)
@@ -72,7 +81,18 @@ def _stderr(msg: str) -> None:
 
 def _resolve_session_id_and_jsonl() -> tuple[str, Path]:
     """Locate the live session jsonl. Prefers CLAUDE_SESSION_ID; falls
-    back to most-recent mtime under ~/.claude/projects/*/*.jsonl."""
+    back to most-recent mtime under ~/.claude/projects/*/*.jsonl.
+
+    Fallback safety: in current Claude Code releases the harness
+    reliably sets CLAUDE_SESSION_ID for Stop hooks, so the mtime path
+    is single-session-best-effort defensive code for older harness
+    versions and odd surfaces. If two parallel sessions share $HOME
+    (cloud cohabitation, multi-pane local Mac, the briefing-005
+    dual-instance pattern), the fallback can pick the sibling's
+    still-being-written transcript by mtime. The per-project glob
+    narrows blast radius but doesn't eliminate it. If the harness
+    drops CLAUDE_SESSION_ID guarantees, tighten this to "most recent
+    jsonl in the same project slug as $PWD"."""
     projects = Path.home() / ".claude" / "projects"
     if not projects.is_dir():
         raise FileNotFoundError(f"~/.claude/projects not found at {projects}")
@@ -189,6 +209,23 @@ def _age_encrypt(src: Path, dst: Path) -> None:
             stdout=fout,
             check=True,
         )
+
+
+def _read_recipient_pubkey() -> str:
+    """Slurp the X25519 pubkey from RECIPIENT_FILE for sidecar embedding.
+    Returns the last non-comment, non-blank line — matches `age -R`'s
+    own parser convention (one recipient per line, leading `#` is a
+    comment). Embedded in sidecar so a reader holding only meta.json
+    can verify which recipient encrypted the ciphertext without
+    cloning vade-runtime at the same SHA the hook ran from."""
+    try:
+        for line in reversed(RECIPIENT_FILE.read_text().splitlines()):
+            s = line.strip()
+            if s and not s.startswith("#"):
+                return s
+    except OSError:
+        pass
+    return ""
 
 
 def _sha256(path: Path) -> str:
@@ -338,6 +375,7 @@ def main() -> int:
                 "redaction_hits": redaction_summary.get("redaction_hits", {}),
                 "r2": r2_target,
                 "age_recipient_file": str(RECIPIENT_FILE.relative_to(RUNTIME_ROOT)),
+                "age_recipient_pubkey": _read_recipient_pubkey(),
             }
             sidecar_path = sidecar_dir / f"{session_id}.meta.json"
             with open(sidecar_path, "w") as f:
