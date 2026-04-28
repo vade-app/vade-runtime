@@ -23,6 +23,16 @@
 # Requires GITHUB_MCP_PAT in the environment for the fallback path. If
 # unset, the wrapper passes the original failure through with a
 # pointer at coo-bootstrap.sh.
+#
+# Credential-leak hardening (vade-app/vade-runtime#124):
+#   The fallback push targets a credential-bearing URL. To prevent the
+#   PAT from leaking into stdout or .git/config when `-u` /
+#   `--set-upstream` is present, the wrapper:
+#     · strips upstream flags from the fallback args and re-establishes
+#       tracking via `git config branch.<X>.remote=<symbolic remote>`
+#       after the push lands;
+#     · pipes fallback push output through a sed redactor that masks
+#       any `<user>:<password>@` URL.
 
 set -uo pipefail
 
@@ -34,6 +44,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Anything matching is eligible for the direct-URL fallback. Keep this
 # list narrow — we don't want to retry genuine permission errors.
 readonly PROXY_FAILURE_PATTERNS='HTTP 403|send-pack: unexpected disconnect|the remote end hung up unexpectedly|refusing to allow an OAuth App|workflow.*scope'
+
+# Sed expression that masks any `<user>:<password>@` segment of a URL.
+# Defensive against the wrapper's own credential URL leaking from any
+# git-emitted line we don't otherwise control.
+readonly PAT_REDACT_SED='s|(https?://[^:/[:space:]]+:)[^@[:space:]]+@|\1***@|g'
 
 resolve_remote_from_args() {
   local a
@@ -52,6 +67,41 @@ extract_repo_path() {
   # Proxy form: http(s)://[user@]host[:port]/git/owner/repo[.git]
   path="$(printf '%s' "$url" | sed -nE 's#^https?://[^/]+/git/(.+)$#\1#p')"
   printf '%s' "${path%.git}"
+}
+
+# Parse the push refspec out of a git push arg list. Prints two lines —
+# <local-branch> and <remote-ref-name> — used to restore upstream
+# tracking after a fallback push that had `-u` stripped. Empty output
+# when a refspec can't be determined.
+parse_push_refspec() {
+  local remote="$1"; shift
+  local seen_remote=0 a
+  for a in "$@"; do
+    case "$a" in
+      -u|--set-upstream) continue ;;
+      -*) continue ;;
+    esac
+    if [ "$seen_remote" -eq 0 ] && [ "$a" = "$remote" ]; then
+      seen_remote=1
+      continue
+    fi
+    local raw="${a#+}"  # strip force-push prefix
+    local src dst
+    if [[ "$raw" == *:* ]]; then
+      src="${raw%%:*}"
+      dst="${raw#*:}"
+    else
+      src="$raw"
+      dst="$raw"
+    fi
+    printf '%s\n%s\n' "$src" "$dst"
+    return 0
+  done
+  local cur
+  cur="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  if [ -n "$cur" ]; then
+    printf '%s\n%s\n' "$cur" "$cur"
+  fi
 }
 
 PUSH_OUT_TMP=""
@@ -105,17 +155,23 @@ main() {
   local masked_url="https://vade-coo:***@github.com/${repo_path}.git"
   log_err "git proxy push failed; retrying via $masked_url"
 
+  # Build fallback args: substitute direct_url for the remote token, and
+  # drop -u / --set-upstream (the upstream-tracking config gets written
+  # explicitly post-push, see #124).
   local -a new_args=()
-  local seen=0 a
+  local seen_remote=0 has_upstream=0 a
   for a in "$@"; do
-    if [ "$seen" -eq 0 ] && [ "$a" = "$remote" ]; then
+    case "$a" in
+      -u|--set-upstream) has_upstream=1; continue ;;
+    esac
+    if [ "$seen_remote" -eq 0 ] && [ "$a" = "$remote" ]; then
       new_args+=("$direct_url")
-      seen=1
+      seen_remote=1
     else
       new_args+=("$a")
     fi
   done
-  if [ "$seen" -eq 0 ]; then
+  if [ "$seen_remote" -eq 0 ]; then
     local current_branch
     current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
     if [ -z "$current_branch" ]; then
@@ -125,7 +181,37 @@ main() {
     new_args+=("$direct_url" "HEAD:refs/heads/$current_branch")
   fi
 
-  git push "${new_args[@]}"
+  # Pipe push output through a redactor as belt-and-suspenders against
+  # any URL leak from git itself. PIPESTATUS preserves git's exit code.
+  local fallback_rc
+  git push "${new_args[@]}" 2>&1 | sed -E "$PAT_REDACT_SED"
+  fallback_rc="${PIPESTATUS[0]}"
+  if [ "$fallback_rc" -ne 0 ]; then
+    return "$fallback_rc"
+  fi
+
+  # Restore upstream tracking via the symbolic remote so .git/config
+  # stays free of the credential URL. Skip silently if the user didn't
+  # ask for upstream-setting.
+  if [ "$has_upstream" -eq 1 ]; then
+    local refs local_branch remote_ref merge_ref
+    refs="$(parse_push_refspec "$remote" "$@")"
+    local_branch="$(printf '%s' "$refs" | sed -n '1p')"
+    remote_ref="$(printf '%s' "$refs" | sed -n '2p')"
+    if [ -n "$local_branch" ] && [ -n "$remote_ref" ]; then
+      case "$remote_ref" in
+        refs/*) merge_ref="$remote_ref" ;;
+        *) merge_ref="refs/heads/$remote_ref" ;;
+      esac
+      git config "branch.${local_branch}.remote" "$remote"
+      git config "branch.${local_branch}.merge" "$merge_ref"
+    else
+      log_err "fallback push succeeded but could not parse refspec; upstream not restored — run 'git push -u $remote <branch>' manually if needed"
+    fi
+  fi
 }
 
-main "$@"
+# Run main only when invoked as a script (not when sourced for testing).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
