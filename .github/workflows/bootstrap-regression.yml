@@ -85,3 +85,22 @@ jobs:
             /tmp/bootstrap-regression-result.json
           if-no-files-found: warn
           retention-days: 14
+
+  transcript-redaction:
+    # Fast standalone job for the redaction engine + Secret Registration
+    # Rule. Independent of the heavy bootstrap-regression job above
+    # because it doesn't need a staged workspace — just python3 + jq.
+    # Origin: vade-app/vade-agent-logs#64.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Redaction engine — corpus + thinking + negative tests
+        run: python3 "$GITHUB_WORKSPACE/scripts/ci/test-transcript-redaction.py"
+
+      - name: Secret Registration Rule — common.sh ↔ redaction config parity
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/check-secret-registration.sh"
