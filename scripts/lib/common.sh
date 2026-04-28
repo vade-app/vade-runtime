@@ -1110,6 +1110,7 @@ fetch_coo_secrets() {
   log "Fetching COO secrets from 1Password vault COO"
   local github_pat="" agentmail_key="" mem0_key=""
   local r2_access_key_id="" r2_secret_access_key="" age_identity=""
+  local vade_auth_token=""
   local got=0
 
   if github_pat="$(retry 3 op read 'op://COO/vade-coo-self-2026-04/token')" && [ -n "$github_pat" ]; then
@@ -1163,6 +1164,21 @@ fetch_coo_secrets() {
     log "  WARN: op://COO/transcripts-age-key/credential unavailable; transcript decryption (Stage-1 analyzer) disabled — encryption still works (recipient pubkey is committed at scripts/lib/transcripts-recipient.age)"
   fi
 
+  # vade-canvas MCP bearer (vade-core#93). Resolves the ${VADE_AUTH_TOKEN}
+  # placeholder in vade-core/.mcp.json so COO sessions that cwd into
+  # vade-core/ can talk to mcp.vade-app.dev/sse. Best-effort: missing
+  # vault item warns and leaves VADE_AUTH_TOKEN unset (the .mcp.json
+  # then resolves to "Bearer " and the SSE handshake 401s with a clear
+  # cause in coo-bootstrap.log). Bearer must also appear in Fly's
+  # VADE_AUTH_TOKENS.agents[] for the canvas MCP to accept it.
+  if vade_auth_token="$(retry 3 op read 'op://COO/vade-canvas-coo/credential')" && [ -n "$vade_auth_token" ]; then
+    log "  read vade-canvas COO bearer (len=${#vade_auth_token})"
+    got=$((got+1))
+  else
+    vade_auth_token=""
+    log "  WARN: op://COO/vade-canvas-coo/credential unavailable; VADE_AUTH_TOKEN will be unset (vade-core/.mcp.json placeholder resolves empty; vade-canvas MCP unreachable from vade-core/ cwd)"
+  fi
+
   if [ "$got" -eq 0 ]; then
     log "  no COO secrets could be fetched; skipping env file write"
     return 1
@@ -1186,6 +1202,7 @@ fetch_coo_secrets() {
       if [ -n "$r2_access_key_id" ];     then echo "export R2_TRANSCRIPTS_ACCESS_KEY_ID='$r2_access_key_id'"; fi
       if [ -n "$r2_secret_access_key" ]; then echo "export R2_TRANSCRIPTS_SECRET_ACCESS_KEY='$r2_secret_access_key'"; fi
       if [ -n "$age_identity" ];         then echo "export TRANSCRIPTS_AGE_IDENTITY='$age_identity'"; fi
+      if [ -n "$vade_auth_token" ];      then echo "export VADE_AUTH_TOKEN='$vade_auth_token'"; fi
     } > "$env_file"
   )
   chmod 600 "$env_file"
@@ -1202,6 +1219,7 @@ fetch_coo_secrets() {
   if [ -n "$r2_access_key_id" ];     then export R2_TRANSCRIPTS_ACCESS_KEY_ID="$r2_access_key_id"; fi
   if [ -n "$r2_secret_access_key" ]; then export R2_TRANSCRIPTS_SECRET_ACCESS_KEY="$r2_secret_access_key"; fi
   if [ -n "$age_identity" ];         then export TRANSCRIPTS_AGE_IDENTITY="$age_identity"; fi
+  if [ -n "$vade_auth_token" ];      then export VADE_AUTH_TOKEN="$vade_auth_token"; fi
   return 0
 }
 
@@ -1215,7 +1233,8 @@ merge_coo_settings_env() {
   _write_claude_settings_env \
     "${GITHUB_MCP_PAT:-}" \
     "${AGENTMAIL_API_KEY:-}" \
-    "${MEM0_API_KEY:-}"
+    "${MEM0_API_KEY:-}" \
+    "${VADE_AUTH_TOKEN:-}"
 }
 
 # Persist non-secret bootstrap-derived path state into ~/.claude/settings.json
@@ -1244,7 +1263,7 @@ merge_coo_settings_paths() {
 # Both are only exported when the corresponding filesystem path
 # exists, so this is a no-op outside the Claude cloud image.
 _write_claude_settings_env() {
-  local pat="$1" agentmail="$2" mem0="$3"
+  local pat="$1" agentmail="$2" mem0="$3" vade_auth_token="${4:-}"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json env merge"
     return 0
@@ -1260,6 +1279,7 @@ _write_claude_settings_env() {
   [ -d "/opt/pw-browsers" ] && pw_browsers="/opt/pw-browsers"
 
   GITHUB_MCP_PAT="$pat" AGENTMAIL_API_KEY="$agentmail" MEM0_API_KEY="$mem0" \
+  VADE_AUTH_TOKEN="$vade_auth_token" \
   NODE_PATH="$node_path" PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" node -e '
     const fs = require("fs");
     const path = process.argv[1];
@@ -1279,6 +1299,9 @@ _write_claude_settings_env() {
     }
     if (process.env.MEM0_API_KEY) {
       merged.MEM0_API_KEY = process.env.MEM0_API_KEY;
+    }
+    if (process.env.VADE_AUTH_TOKEN) {
+      merged.VADE_AUTH_TOKEN = process.env.VADE_AUTH_TOKEN;
     }
     if (process.env.NODE_PATH) {
       merged.NODE_PATH = process.env.NODE_PATH;

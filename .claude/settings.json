@@ -75,8 +75,6 @@
       "mcp__github__search_repositories",
       "mcp__github__search_users",
 
-      "mcp__2f248645-8699-4e80-a5b1-5b991f64fb8c__*",
-
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
