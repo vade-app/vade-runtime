@@ -503,20 +503,26 @@ else
 fi
 
 # ── F2 — Memo retirement invariant ───────────────────────────
-# Every memo with date >= F_CUTOFF in coo/memo_index.json must carry a
-# 'Retirement condition' clause or `retention: "permanent"` in its body
-# slice of coo/memos.md. Absence = case-law violation per memo_protocol.md.
-if [ -f "$F_REPO/coo/memo_index.json" ] && [ -f "$F_REPO/coo/memos.md" ] && check_cmd jq; then
+# Every memo dated >= F_CUTOFF in coo/memo_index.json must carry a
+# 'Retirement condition' clause or `retention: "permanent"` in the body of
+# its per-memo file at $entry.file_path (post-#210 layout, MEMO-2026-04-27-5kaq;
+# canonical spec: coo/culture_system_sop.md F2 row).
+# Absence = case-law violation per memo_protocol.md.
+if [ -f "$F_REPO/coo/memo_index.json" ] && check_cmd jq; then
   f2_total=0
   f2_bad=()
-  while IFS='|' read -r id ls le; do
+  while IFS='|' read -r id fp; do
     [ -n "$id" ] || continue
     f2_total=$((f2_total + 1))
-    block=$(sed -n "${ls},${le}p" "$F_REPO/coo/memos.md" 2>/dev/null || echo '')
-    if ! printf '%s' "$block" | grep -qE 'Retirement condition|retention: "permanent"'; then
+    body_path="$F_REPO/$fp"
+    if [ ! -f "$body_path" ]; then
+      f2_bad+=("$id(missing-file)")
+      continue
+    fi
+    if ! grep -qE 'Retirement condition|retention: "permanent"' "$body_path"; then
       f2_bad+=("$id")
     fi
-  done < <(jq -r --arg c "$F_CUTOFF" '.[] | select(.date >= $c) | "\(.id)|\(.line_start)|\(.line_end)"' "$F_REPO/coo/memo_index.json" 2>/dev/null)
+  done < <(jq -r --arg c "$F_CUTOFF" '.[] | select(.date >= $c) | "\(.id)|\(.file_path)"' "$F_REPO/coo/memo_index.json" 2>/dev/null)
 
   if [ "$f2_total" -eq 0 ]; then
     _add F2 true "no post-cutoff memos to check"
@@ -526,7 +532,7 @@ if [ -f "$F_REPO/coo/memo_index.json" ] && [ -f "$F_REPO/coo/memos.md" ] && chec
     _add F2 false "missing retirement clause: $(IFS=,; echo "${f2_bad[*]}")"
   fi
 else
-  _add F2 skip "requires memo_index.json, memos.md, and jq"
+  _add F2 skip "requires coo/memo_index.json and jq"
 fi
 
 # ── F3 — Essay companion invariant ───────────────────────────
