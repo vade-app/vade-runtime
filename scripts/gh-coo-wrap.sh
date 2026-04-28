@@ -58,6 +58,25 @@ sid="${CLAUDE_CODE_REMOTE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 SESSION_URL=""
 [ -n "$sid" ] && SESSION_URL="https://claude.ai/code/session_${sid#cse_}"
 
+# Resolve issue/PR shape-check script. Advisory only; missing-tolerant.
+# Source: vade-coo-memory/bin/issue-pr-shape-check.py (lands via
+# vade-coo-memory#226). The wrapper uses the script when present;
+# absence is silent and never affects the gh invocation.
+SHAPE_CHECK="${VADE_COO_MEMORY_DIR:-/home/user/vade-coo-memory}/bin/issue-pr-shape-check.py"
+[ -x "$SHAPE_CHECK" ] || SHAPE_CHECK=""
+
+# shape_check_body <body>: surface advisory body-shape warnings to
+# stderr per MEMO-2026-04-28-4umz. Side-effect only — script's
+# stderr passes through; exit code is intentionally ignored
+# (the check is non-blocking by #201's "no hard gates" constraint).
+shape_check_body() {
+  local body="$1"
+  [ -z "$SHAPE_CHECK" ] && return 0
+  [ -z "$body" ] && return 0
+  printf '%s' "$body" | python3 "$SHAPE_CHECK" || true
+  return 0
+}
+
 # is_covered <argv...>: returns 0 iff the (subcommand, action) pair
 # parsed from argv falls in the augment-eligible set. Skips leading
 # global flags so that e.g. `gh -R repo issue comment` is recognized
@@ -101,8 +120,12 @@ is_covered() {
 #   * no session URL available
 #   * body is empty
 #   * body already contains a claude.ai/code/session_ link
+#
+# Side-effect: invokes shape_check_body before the URL append so
+# the original (un-augmented) body is what's measured.
 augment() {
   local body="$1"
+  shape_check_body "$body"
   if [ -z "$SESSION_URL" ] || [ -z "$body" ]; then
     printf '%s' "$body"
     return
