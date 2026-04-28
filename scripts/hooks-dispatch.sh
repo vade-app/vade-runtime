@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart/Stop hook dispatcher.
+# SessionStart/SessionEnd hook dispatcher.
 #
 # Installed as $HOME/.claude/vade-hooks/dispatch.sh (symlink, maintained
 # by sync_claude_config → ensure_hooks_dispatch_shim). Every hook command

@@ -41,7 +41,7 @@
         ]
       }
     ],
-    "Stop": [
+    "SessionEnd": [
       {
         "hooks": [
           {
