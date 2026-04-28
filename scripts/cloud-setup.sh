@@ -179,6 +179,24 @@ else
   log "Warning: mem0-mcp-server install failed at build time; first session will boot with Mem0 MCP dark."
 fi
 
+# Pre-fetch the 1Password MCP server (@takescake/1password-mcp) into the
+# global npm cache so first-session `npx -y` resolves offline. Same
+# snapshot-persistence rationale as op + gh + mem0 — paying the npm
+# fetch cost at build time keeps the SessionStart MCP spawn off the
+# egress proxy. The MCP exists to close the rotated-PAT → restart
+# failure class (vade-runtime#164): when 1Password rotates a credential
+# mid-session, an in-process MCP path can re-read the secret without
+# the harness restart that the cached `op` CLI bootstrap requires.
+# Read-only is enforced by the COO service account's vault permissions
+# (1Password's own recommendation per their MCP security guidance);
+# .mcp.json scopes credentials to OP_SERVICE_ACCOUNT_TOKEN only.
+if npm install -g "@takescake/1password-mcp@2.4.2" --no-audit --no-fund >/dev/null 2>&1; then
+  build_log_record OK "cloud-setup: @takescake/1password-mcp installed at build time"
+else
+  build_log_record WARN "cloud-setup: @takescake/1password-mcp install failed at build time; first-session npx will fetch on demand"
+  log "Warning: @takescake/1password-mcp install failed at build time; first session will pay an npx-on-demand fetch."
+fi
+
 # COO identity bootstrap runs only when OP_SERVICE_ACCOUNT_TOKEN is set
 # in the cloud environment config. Non-fatal on failure — the base VADE
 # env should still come up even if 1Password is unreachable.

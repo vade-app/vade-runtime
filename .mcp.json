@@ -18,6 +18,16 @@
       "env": {
         "AGENTMAIL_API_KEY": "${AGENTMAIL_API_KEY}"
       }
+    },
+    "1password": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@takescake/1password-mcp@2.4.2"
+      ],
+      "env": {
+        "OP_SERVICE_ACCOUNT_TOKEN": "${OP_SERVICE_ACCOUNT_TOKEN}"
+      }
     }
   }
 }
