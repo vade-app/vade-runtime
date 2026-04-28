@@ -141,8 +141,12 @@ fi
 # Step 2: detect echo/printf of guarded vars. Split on pipeline
 # boundaries first, then on logical boundaries. Only the LAST stage
 # of each pipeline is treated as a terminal-output context.
-if [ -z "$leak_reason" ]; then
-  reason="$(python3 - "$cmd" <<'PY' 2>/dev/null || true
+#
+# Note: heredoc in a function (not inline in $()) — bash 3.2 (macOS)
+# misparses <<'DELIM' inside $() when the delimiter is single-quoted.
+echo_check() {
+  local c="$1"
+  python3 - "$c" <<'PY' 2>/dev/null || true
 import re, sys
 cmd = sys.argv[1]
 
@@ -313,7 +317,10 @@ for idx, stage in enumerate(pipelines):
             print("bare echo/printf of a guarded token env var to stdout/file")
             sys.exit(0)
 PY
-)"
+}
+
+if [ -z "$leak_reason" ]; then
+  reason="$(echo_check "$cmd")"
   if [ -n "$reason" ]; then
     leak_reason="$reason"
   fi
