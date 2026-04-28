@@ -27,7 +27,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 # Belt-and-suspenders: common.sh seeds VADE_CLOUD_STATE_DIR with a cloud-host default;
 # session-start-sync.sh now merges it into settings.json so hooks inherit the correct path,
 # but if that merge hasn't run yet (e.g., manual invocation before bootstrap), redirect
-# when the cloud path is absent and the local path exists. vade-runtime#175.
+# when the cloud path is absent and the local path exists. vade-runtime#171.
 if [ ! -d "$VADE_CLOUD_STATE_DIR" ] && [ -d "$HOME/.vade/local-state" ]; then
   VADE_CLOUD_STATE_DIR="$HOME/.vade/local-state"
 fi

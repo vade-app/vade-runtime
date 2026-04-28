@@ -1254,6 +1254,16 @@ merge_coo_settings_paths() {
   _write_claude_settings_paths "$VADE_CLOUD_STATE_DIR" "$bindir"
 }
 
+# Persist VADE_CLOUD_STATE_DIR ONLY (no PATH rewrite) into ~/.claude/settings.json
+# env. Split from merge_coo_settings_paths so callers that fire on session-start
+# (where the live shell PATH is whatever Claude Code's hook subprocess inherited —
+# typically a thin non-login PATH on macOS) don't clobber the rich PATH that
+# coo-bootstrap captured at install time. The state-dir value is host-stable and
+# safe to re-write on every session start; PATH is not. vade-runtime#171.
+merge_coo_settings_state_dir() {
+  _write_claude_settings_state_dir "$VADE_CLOUD_STATE_DIR"
+}
+
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
 # Code reads this at process startup, so ${GITHUB_MCP_PAT} etc. in
 # .mcp.json substitute correctly. Idempotent.
@@ -1392,6 +1402,42 @@ _write_claude_settings_paths() {
   ' "$settings_file"
   chmod 600 "$settings_file"
   log "  merged COO path vars into $settings_file"
+}
+
+# Write VADE_CLOUD_STATE_DIR into ~/.claude/settings.json env without touching
+# the PATH key. Used from the SessionStart sync path on macOS where the hook
+# subprocess inherits a thin PATH (no Homebrew); rewriting PATH from that
+# value would replace the well-formed PATH bootstrap captured at install
+# time. Idempotent. vade-runtime#171.
+_write_claude_settings_state_dir() {
+  local cloud_state_dir="$1"
+  if ! check_cmd node; then
+    log "Warning: node missing; skipping ~/.claude/settings.json state-dir merge"
+    return 0
+  fi
+  local settings_dir="${HOME}/.claude"
+  local settings_file="$settings_dir/settings.json"
+  mkdir -p "$settings_dir"
+  [ -f "$settings_file" ] || echo '{}' > "$settings_file"
+
+  VADE_CLOUD_STATE_DIR="$cloud_state_dir" node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(path, "utf8")) || {}; }
+    catch (e) {
+      console.error("[vade-setup] " + path + " unparseable; aborting state-dir merge.");
+      process.exit(1);
+    }
+    const merged = Object.assign({}, cfg.env || {});
+    if (process.env.VADE_CLOUD_STATE_DIR) {
+      merged.VADE_CLOUD_STATE_DIR = process.env.VADE_CLOUD_STATE_DIR;
+    }
+    cfg.env = merged;
+    fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+  ' "$settings_file"
+  chmod 600 "$settings_file"
+  log "  merged VADE_CLOUD_STATE_DIR into $settings_file"
 }
 
 # Ensure openssh-client is present (provides ssh-keygen + ssh-keyscan).
