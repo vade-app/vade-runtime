@@ -276,13 +276,26 @@ cmd_close() {
     log "export hook missing or non-executable at $EXPORT_HOOK; skipping"
   fi
 
-  # ---- b. Stub session log -------------------------------------------------
+  # Resolve agent-logs working tree once — both the closer-spawn path
+  # and the stub-fallback path need it.
   local agent_logs_dir
   agent_logs_dir="$(_resolve_agent_logs_dir)"
   if [ -z "$agent_logs_dir" ]; then
     log "vade-agent-logs working tree not found; cannot drop stub log"
     return 0
   fi
+
+  # ---- a.5 Try the session-closer agent (vade-runtime#148 Part B) ---------
+  # If the closer succeeds, it writes a real session-log .md, the Mem0
+  # episodic entry, and opens a PR — return early. If it fails or is
+  # unavailable, fall through to the stub-write path (steps b/c/d).
+  if _try_spawn_session_closer "$session_id" "$agent_logs_dir"; then
+    log "session-closer succeeded; skipping stub fallback"
+    return 0
+  fi
+  log "session-closer unavailable or failed; falling back to stub-write path"
+
+  # ---- b. Stub session log -------------------------------------------------
 
   local first_ts last_ts ev_count idle_close_ts date_path
   first_ts="$(_jsonl_first_timestamp "$jsonl")"
@@ -350,8 +363,76 @@ cmd_close() {
 }
 
 # ---------------------------------------------------------------------------
-# Helpers — agent-logs resolution, jsonl introspection, Mem0 POST, git push
+# Helpers — closer-agent spawn, agent-logs resolution, jsonl
+#          introspection, Mem0 POST, git push
 # ---------------------------------------------------------------------------
+
+# vade-runtime#148 Part B: try to elevate from stub to real synthesized
+# log by spawning the session-closer sub-agent. Returns 0 on success
+# (closer wrote log + Mem0 + PR; caller should skip the stub path);
+# returns 1 on any failure or unavailability (caller falls back to
+# stub-write).
+#
+# Budget cap is bounded explicitly to avoid the closer running away —
+# Sonnet at $3/Mtok input + max ~30 turns worth of work for a session
+# log keeps each fire under ~$0.50 in the worst case.
+_try_spawn_session_closer() {
+  local session_id="${1:-}" agent_logs_dir="${2:-}"
+  if [ -z "$session_id" ] || [ -z "$agent_logs_dir" ]; then
+    log "_try_spawn_session_closer: missing args"
+    return 1
+  fi
+
+  if [ "${VADE_SESSION_CLOSER_DISABLE:-}" = "1" ]; then
+    log "session-closer disabled by VADE_SESSION_CLOSER_DISABLE=1"
+    return 1
+  fi
+
+  if ! command -v claude >/dev/null 2>&1; then
+    log "claude binary not on PATH; closer unavailable"
+    return 1
+  fi
+
+  # Locate the meta.json the closer needs as input. Search transcripts/
+  # rather than just the date-path because the export hook's date-path
+  # is derived from first-event timestamp, not now.
+  local meta_path
+  meta_path="$(find "$agent_logs_dir/transcripts" -maxdepth 4 -type f \
+    -name "${session_id}.meta.json" 2>/dev/null | head -1)"
+  if [ -z "$meta_path" ]; then
+    log "no meta.json for session_id=$session_id; closer cannot synthesize"
+    return 1
+  fi
+
+  local prompt closer_log timeout_seconds
+  closer_log="$LOG_DIR/${session_id}.closer.log"
+  timeout_seconds="${VADE_SESSION_CLOSER_TIMEOUT_SECONDS:-900}"  # 15 min
+  prompt="Synthesize a closer session log for session_id ${session_id}.
+
+The meta.json is at ${meta_path}.
+
+Follow your standard pipeline. Return the session-log path + PR URL."
+
+  log "spawning session-closer (timeout=${timeout_seconds}s, log=$closer_log)"
+
+  # Use --print for non-interactive mode + --max-budget-usd as a
+  # belt-and-braces safety net. PAT is already in env from coo-env;
+  # the closer reads MEM0_API_KEY + GITHUB_MCP_PAT directly.
+  local rc=0
+  timeout "${timeout_seconds}" claude \
+      --agent session-closer \
+      --print \
+      --max-budget-usd "${VADE_SESSION_CLOSER_BUDGET_USD:-1.00}" \
+      "$prompt" \
+      >> "$closer_log" 2>&1 || rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    log "session-closer returned rc=0; treating as success"
+    return 0
+  fi
+  log "session-closer rc=$rc — falling back to stub-write path"
+  return 1
+}
 
 _resolve_agent_logs_dir() {
   if [ -n "${VADE_AGENT_LOGS_DIR:-}" ] && [ -d "$VADE_AGENT_LOGS_DIR" ]; then
