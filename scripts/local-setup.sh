@@ -8,11 +8,10 @@
 # Unlike cloud, the synced .claude/ goes to project-scope
 # $WORKSPACE_ROOT/.claude/ rather than user-scope $HOME/.claude/, so the
 # user's personal Claude Code config (Warp plugin, personal permissions,
-# autoMemoryEnabled, etc.) is untouched. The SessionStart-hook dispatch
-# shim still gets installed at $HOME/.claude/vade-hooks/dispatch.sh —
-# that's the path the synced settings.json's hook commands reference and
-# it resolves against the user's real $HOME at hook-fire time regardless
-# of where the settings.json itself lives.
+# autoMemoryEnabled, etc.) is untouched. settings.json hook commands
+# reference $CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh — Claude
+# Code sets $CLAUDE_PROJECT_DIR to the project root at hook-fire time,
+# which resolves to $WORKSPACE_ROOT on local and $HOME on cloud.
 #
 # Two env-var redirects keep the run from touching the user's personal
 # state: VADE_CLOUD_STATE_DIR sends the build receipt and build.log to
@@ -61,11 +60,10 @@ sync_claude_config "$WORKSPACE_ROOT/vade-runtime/.claude" "$WORKSPACE_ROOT/.clau
 aggregate_workspace_claude_config "$WORKSPACE_ROOT" "$WORKSPACE_ROOT/.claude" \
   vade-runtime vade-coo-memory vade-core
 # The synced settings.json's hook commands reference
-# $HOME/.claude/vade-hooks/dispatch.sh — those resolve at hook-fire time
-# against the user's real $HOME, not the project-scope .claude above.
-# Install the shim at $HOME/.claude/vade-hooks/ so the hook chain can
-# actually find dispatch.sh.
-ensure_hooks_dispatch_shim "$WORKSPACE_ROOT/vade-runtime/.claude" "$HOME/.claude"
+# $CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh — sync_claude_config
+# above already installs that shim at $WORKSPACE_ROOT/.claude/vade-hooks/
+# (which is what $CLAUDE_PROJECT_DIR resolves to on local), so no extra
+# install at $HOME is needed.
 ensure_workspace_mcp_config "$WORKSPACE_ROOT/vade-runtime/.mcp.json" "$WORKSPACE_ROOT/.mcp.json"
 ensure_workspace_identity_link "$WORKSPACE_ROOT/vade-coo-memory/CLAUDE.md" "$WORKSPACE_ROOT/CLAUDE.md"
 
