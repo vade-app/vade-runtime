@@ -33,13 +33,6 @@
           { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" auto-subscribe-pr" }
         ]
       }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" filter-webhook-self-echo" }
-        ]
-      }
     ]
   },
   "env": {
