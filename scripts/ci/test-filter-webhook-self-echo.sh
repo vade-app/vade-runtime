@@ -46,12 +46,15 @@ run_hook() {
   printf '%s' "$1" | bash "$HOOK" 2>/dev/null || true
 }
 
+PASSED=0
+
 assert_block() {
   local name="$1" out="$2"
   if ! printf '%s' "$out" | jq -e '.decision == "block"' >/dev/null 2>&1; then
     echo "FAIL: [$name] expected decision=block, got: $out" >&2
     exit 1
   fi
+  PASSED=$((PASSED + 1))
   echo "  - [$name] blocked OK"
 }
 
@@ -61,6 +64,7 @@ assert_passthrough() {
     echo "FAIL: [$name] expected empty output (pass-through), got: $out" >&2
     exit 1
   fi
+  PASSED=$((PASSED + 1))
   echo "  - [$name] pass-through OK"
 }
 
@@ -117,4 +121,4 @@ Comment: \"bare-id case\n${bare_url}\"
 out="$(run_hook "$(mk_input "$bare_block" "$bare_sid")")"
 assert_block "bare-session-id" "$out"
 
-echo "OK: filter-webhook-self-echo smoke — 8 tests passed"
+echo "OK: filter-webhook-self-echo smoke — $PASSED tests passed"
