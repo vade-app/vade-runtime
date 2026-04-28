@@ -40,6 +40,22 @@ case "${1:-}" in
       "op://COO/mem0-vade-coo/credential")
         echo "m0_CIMOCK_MEM0_KEY_DO_NOT_USE"
         ;;
+      "op://COO/r2-transcripts/access-key-id")
+        # Mocked R2 access key id. Shape note: real Cloudflare R2 issues
+        # 32-char lowercase hex; mock returns a non-shape placeholder so
+        # the literal-shape regex (a-f0-9) doesn't match anything in
+        # disk content scanners.
+        echo "R2AKID_CIMOCK_DO_NOT_USE_R2AKID_CI"
+        ;;
+      "op://COO/r2-transcripts/secret-access-key")
+        echo "R2SECRET_CIMOCK_DO_NOT_USE_R2SECRET_CIMOCK_DO_NOT_USE_R2SECRET_CIMK"
+        ;;
+      "op://COO/transcripts-age-key/credential")
+        # Mocked age identity. The literal `AGE-SECRET-KEY-1` prefix
+        # is necessary for an end-to-end test; body is `CIMOCK0...` ASCII
+        # and never decrypts a real ciphertext.
+        echo "AGE-SECRET-KEY-1CIMOCK000000000000000000000000000000000000000000000000"
+        ;;
       "op://COO/vade-coo-auth/private key")
         cat "$KEYDIR/vade-coo-auth"
         ;;

@@ -143,18 +143,39 @@
       "notes": "GCP OAuth refresh token shape."
     },
     {
+      "id": "age-secret-key",
+      "regex": "AGE-SECRET-KEY-1[A-Z0-9]{50,80}",
+      "replacement": "[REDACTED:age-identity]",
+      "secret_var": "TRANSCRIPTS_AGE_IDENTITY",
+      "notes": "age X25519 private identity (Bech32-encoded, uppercase). Prefix is the literal `AGE-SECRET-KEY-1`, body is 58-char Bech32 in practice; range 50–80 tolerates format extension. High false-positive resistance — the prefix is unique. Used by the Stage-1 transcript-analyzer (Batch 3 of vade-app/vade-agent-logs#64) to decrypt R2-stored transcripts."
+    },
+    {
       "id": "aws-akid",
       "regex": "\\bAKIA[A-Z0-9]{16}\\b",
       "replacement": "[REDACTED:aws-akid]",
       "secret_var": null,
-      "notes": "AWS access-key id, 20 chars."
+      "notes": "AWS access-key id, 20 chars. Defensive — does NOT cover Cloudflare R2 access key IDs (R2 uses 32-char hex, not AKIA-prefix); see r2-access-key-id."
     },
     {
       "id": "aws-secret",
       "regex": "(?i)(aws_secret_access_key\\s*[=:]\\s*)[A-Za-z0-9/+]{40}",
       "replacement": "\\g<1>[REDACTED:aws-secret]",
       "secret_var": null,
-      "notes": "AWS secret access key, kv-anchored to avoid the over-broad raw-40-char-base64 false-positive class."
+      "notes": "AWS secret access key, kv-anchored to avoid the over-broad raw-40-char-base64 false-positive class. Defensive — does NOT cover Cloudflare R2 secret access keys (R2 uses 64-char hex, not 40-char base64); see r2-secret-access-key."
+    },
+    {
+      "id": "r2-access-key-id",
+      "regex": "(?i)((?:R2_TRANSCRIPTS_ACCESS_KEY_ID|AWS_ACCESS_KEY_ID)\\s*[=:]\\s*['\"]?)[a-fA-F0-9]{32}",
+      "replacement": "\\g<1>[REDACTED:r2-access-key]",
+      "secret_var": "R2_TRANSCRIPTS_ACCESS_KEY_ID",
+      "notes": "Cloudflare R2 access key ID — 32-char hex (no AKIA prefix despite S3 compatibility). Shapeless in isolation (matches every git SHA / MD5), so kv-anchored to its env-var name. R2_TRANSCRIPTS_ACCESS_KEY_ID is the canonical export from fetch_coo_secrets; AWS_ACCESS_KEY_ID alias because the export hook re-maps R2_TRANSCRIPTS_* into AWS_* for boto3 at run time."
+    },
+    {
+      "id": "r2-secret-access-key",
+      "regex": "(?i)((?:R2_TRANSCRIPTS_SECRET_ACCESS_KEY|AWS_SECRET_ACCESS_KEY)\\s*[=:]\\s*['\"]?)[a-fA-F0-9]{64}",
+      "replacement": "\\g<1>[REDACTED:r2-secret-key]",
+      "secret_var": "R2_TRANSCRIPTS_SECRET_ACCESS_KEY",
+      "notes": "Cloudflare R2 secret access key — 64-char hex (SHA-256-derived). Same kv-anchoring rationale as r2-access-key-id; the existing aws-secret pattern (40-char base64) does not cover R2."
     },
     {
       "id": "auth-header",

@@ -12,7 +12,10 @@ ARG USERNAME=node
 # tools like `ps` used by dev servers, openssh-client for git-over-ssh
 # and ssh-keygen fingerprint validation, unzip for the 1Password CLI
 # install path used by the COO identity bootstrap, python3 / python3-venv
-# for the uv-managed mem0-mcp-server install below.
+# for the uv-managed mem0-mcp-server install below, age for at-rest
+# encryption of session transcripts uploaded by the Stop hook
+# (vade-app/vade-agent-logs#64 Batch 2; recipient pubkey at
+# scripts/lib/transcripts-recipient.age, identity in 1Password).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
       ca-certificates \
@@ -23,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip \
       python3 \
       python3-venv \
+      age \
     && rm -rf /var/lib/apt/lists/*
 
 # 1Password CLI — pinned in versions.lock. Baked at image-build time so

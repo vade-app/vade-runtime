@@ -82,6 +82,31 @@ procps              debian-bookworm   # `ps`, `top` — helpful when
 openssh-client      debian-bookworm   # `git push` over SSH for
                                       # operators who prefer it to
                                       # HTTPS+PAT.
+age                 debian-bookworm   # X25519 file encryption.
+                                      # Required by the session-end
+                                      # transcript-export Stop hook
+                                      # (vade-app/vade-agent-logs#64
+                                      # Batch 2) for at-rest encryption
+                                      # of redacted transcripts before
+                                      # R2 upload. Recipient pubkey
+                                      # committed at
+                                      # scripts/lib/transcripts-recipient.age;
+                                      # identity in 1Password at
+                                      # op://COO/transcripts-age-key/credential.
+
+# Python libraries resolved at run time via `uv run --script` inline
+# PEP 723 metadata (no system-wide install). Listed here so the pin is
+# discoverable and the bootstrap-regression CI can detect drift in
+# scripts/lib/*.py and scripts/*.py shebangs.
+boto3               >=1.34,<2 # AWS SDK for Python. Used by
+                              # scripts/session-end-transcript-export.py
+                              # to upload redacted+encrypted transcripts
+                              # to Cloudflare R2 (S3-compatible API,
+                              # signature_version=s3v4, region=auto).
+                              # Major-version-bounded so 2.x doesn't
+                              # silently break the script via API
+                              # change. uv resolves on first run; cache
+                              # warm afterward.
 
 # Deferred (not in image yet, listed so the absence is explicit):
 # rust       — planned for Phase 3+ performance modules per vade-core
