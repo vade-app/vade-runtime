@@ -1,0 +1,21 @@
+# vade-app/vade-agent-logs#64 — transcripts encryption recipient
+#
+# Public X25519 recipient for encrypting redacted session transcripts
+# at-rest in Cloudflare R2. The matching private identity lives in
+# 1Password at op://COO/transcripts-age-key/credential and is fetched
+# into TRANSCRIPTS_AGE_IDENTITY by fetch_coo_secrets — read by the
+# Stage-1 transcript-analyzer sub-agent (Batch 3) at decryption time.
+#
+# Pubkeys are safe to commit; the private identity is the only thing
+# that protects the data. Loss of the 1Password slot makes every
+# transcript ever encrypted with this recipient permanently unreadable.
+#
+# Rotation: generate a new keypair locally (`age-keygen`), paste the
+# new public key below, stash the private in 1Password (keep the prior
+# slot under op://COO/transcripts-age-key-archive until a re-encrypt
+# sweep over historical R2 objects completes), update this file. The
+# export hook reads this file at run time, so a single PR rotation
+# takes effect on next session-end.
+#
+# Generated: 2026-04-28 (Batch 2 of issue #64).
+age14007kcvugcch2lryqjwcrjegrv7x0gqr0tjsh4kf7w704yq479us5dtedr
