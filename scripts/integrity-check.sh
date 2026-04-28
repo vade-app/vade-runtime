@@ -571,6 +571,18 @@ fi
 # Every commit since F_CUTOFF in $F_REPO must resolve to vade-coo
 # (author email coo@vade-app.dev) or carry 'ven-human-action:' in body.
 # Silent venpopov-authored commits on coo-scope paths are F4-relevant.
+#
+# F4_ALLOWLIST_SHA — explicit per-commit carve-outs where the marker
+# was present in the PR body at merge time but the f4-marker workflow
+# raced past a fast manual merge, leaving the commit body without the
+# marker. Each entry must cite the originating PR + tracking issue.
+# Tracked structurally at vade-coo-memory#271.
+F4_ALLOWLIST_SHA=(
+  # 0fd421a198 — vade-coo-memory#262 "add insight analysis" (Ven-
+  # authored doc-add); PR body carries ven-human-action marker but
+  # the merge stripped it. See vade-coo-memory#271 for the race fix.
+  "0fd421a198"
+)
 if [ -d "$F_REPO/.git" ] && check_cmd git; then
   f4_total=0
   f4_bad=()
@@ -586,6 +598,11 @@ if [ -d "$F_REPO/.git" ] && check_cmd git; then
     if printf '%s' "$body" | grep -q 'ven-human-action:'; then
       continue
     fi
+    allowed=0
+    for allow_sha in "${F4_ALLOWLIST_SHA[@]}"; do
+      case "$sha" in "$allow_sha"*) allowed=1; break ;; esac
+    done
+    [ "$allowed" -eq 1 ] && continue
     f4_bad+=("${sha:0:10}($email)")
   done < <(git -C "$F_REPO" log --since="$F_CUTOFF_GIT" --format='%H|%ae|%B%x00' 2>/dev/null | awk 'BEGIN{RS="\0"} { sub(/^\n/, ""); if (NF) { gsub(/\n/,"\\n"); print } }')
 
