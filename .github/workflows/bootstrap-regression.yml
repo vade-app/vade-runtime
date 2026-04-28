@@ -108,5 +108,12 @@ jobs:
       - name: Install age (apt)
         run: sudo apt-get install -y --no-install-recommends age
 
+      - name: Install uv
+        # Required by the export hook's `#!/usr/bin/env -S uv run --script`
+        # shebang. Cheap install — single statically-linked binary.
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Transcript export hook — smoke (dry-run, isolated $HOME)
         run: python3 "$GITHUB_WORKSPACE/scripts/ci/test-transcript-export.py"
