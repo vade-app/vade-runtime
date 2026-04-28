@@ -77,8 +77,12 @@ _settings_env_complete() {
     // so a literal "${PATH}" in this position is the broken-output of an
     // earlier bootstrap (vade-runtime#83 first-cut bug). Force re-run so
     // _write_claude_settings_paths overwrites with the expanded form.
-    // Also require /usr/bin in the value as a basic sanity floor.
-    if (env.PATH.includes("${PATH}") || !env.PATH.includes("/usr/bin")) {
+    // No FHS-layout floor (vade-runtime#141): hard-coding /usr/bin
+    // overfit to the Debian base image and would re-trigger the
+    // bootstrap on every boot if the image family ever changes
+    // (Alpine/musl, Nix-style /nix/store, etc.). The literal-${PATH}
+    // check above is the load-bearing one.
+    if (env.PATH.includes("${PATH}")) {
       process.exit(1);
     }
     process.exit(0);
