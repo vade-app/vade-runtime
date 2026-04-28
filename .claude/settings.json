@@ -20,7 +20,8 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end" }
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end" },
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" persist-permissions" }
         ]
       }
     ],
