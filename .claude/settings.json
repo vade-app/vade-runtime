@@ -213,7 +213,8 @@
       "Bash(bash *)",
       "Bash(node *)",
       "Bash(flyctl logs *)",
-      "mcp__vade-canvas__getCanvasState"
+      "mcp__vade-canvas__getCanvasState",
+      "Bash(xargs -0 cat)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
