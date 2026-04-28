@@ -178,6 +178,13 @@
       "notes": "Cloudflare R2 secret access key — 64-char hex (SHA-256-derived). Same kv-anchoring rationale as r2-access-key-id; the existing aws-secret pattern (40-char base64) does not cover R2."
     },
     {
+      "id": "vade-auth-token",
+      "regex": "(?i)(VADE_AUTH_TOKEN\\s*[=:]\\s*['\"]?)[A-Za-z0-9_\\-+/=]{16,}",
+      "replacement": "\\g<1>[REDACTED:vade-auth-token]",
+      "secret_var": "VADE_AUTH_TOKEN",
+      "notes": "vade-canvas MCP bearer (vade-core#93). Opaque shape — bearer is operator-chosen (typically random hex >= 32 chars), so kv-anchored to its env-var name. The entropy fallback also catches it as defense-in-depth."
+    },
+    {
       "id": "auth-header",
       "regex": "(?i)(authorization:\\s*(?:bearer|basic|token)\\s+)[A-Za-z0-9._\\-+/=]{20,}",
       "replacement": "\\g<1>[REDACTED:auth-header]",
