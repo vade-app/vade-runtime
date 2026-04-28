@@ -6,26 +6,56 @@
       {
         "matcher": "startup",
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-start-sync" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-bootstrap" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" memo-index" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-identity-digest" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" discussions-digest" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-idle-watchdog --start" }
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" session-start-sync"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" coo-bootstrap"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" memo-index"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" coo-identity-digest"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" discussions-digest"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" session-idle-watchdog --start"
+          }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle" }
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" session-lifecycle"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-end-transcript-export" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" persist-permissions" }
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" session-end-transcript-export"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" persist-permissions"
+          }
         ]
       }
     ],
@@ -33,7 +63,10 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" auto-subscribe-pr" }
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" auto-subscribe-pr"
+          }
         ]
       }
     ]
@@ -52,7 +85,6 @@
       "mcp__mem0__list_entities",
       "mcp__mem0__list_events",
       "mcp__mem0__get_event_status",
-
       "mcp__github__get_me",
       "mcp__github__get_file_contents",
       "mcp__github__get_commit",
@@ -77,7 +109,6 @@
       "mcp__github__search_pull_requests",
       "mcp__github__search_repositories",
       "mcp__github__search_users",
-
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -103,9 +134,7 @@
       "Bash(git restore:*)",
       "Bash(git config --get:*)",
       "Bash(git ls-files:*)",
-
       "Bash(gh:*)",
-
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
@@ -133,22 +162,42 @@
       "Bash(cut:*)",
       "Bash(awk:*)",
       "Bash(sed -n:*)",
-
       "Bash(bash *vade-runtime/scripts/*:*)",
       "Bash(bash *.claude/commands/_lib/*:*)",
-      "Bash(bash \"$HOME/.claude/vade-hooks/dispatch.sh\":*)",
-
+      "Bash(bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\":*)",
       "Read",
       "Edit",
       "Write",
       "TodoWrite",
       "Skill",
       "Agent",
-
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:tldraw.dev)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(chmod +x /Users/venpopov/GitHub/vade-app/vade-runtime/scripts/sync-repos.sh)",
+      "Bash(ln -s ./vade-runtime/scripts/sync-repos.sh /Users/venpopov/GitHub/vade-app/sync-repos.sh)",
+      "Bash(ln -s /Users/venpopov/GitHub/vade-app/vade-runtime/scripts/sync-repos.sh /Users/venpopov/.local/bin/sync-repos.sh)",
+      "Read(//Users/venpopov/.local/bin/**)",
+      "Read(//Users/venpopov/.vade-cloud-state/**)",
+      "Read(//home/user/.vade-cloud-state/**)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app status --short)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-coo-memory show 83e3bfc -- 'coo/memos/*.md')",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-coo-memory show 83e3bfc --stat)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime diff --stat scripts/session-start-sync.sh)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime diff --stat)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime diff .claude/settings.json)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime log --oneline -10)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime show 83e3bfc -- .claude/settings.json)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime show 83e3bfc --stat)",
+      "Bash(git -C /Users/venpopov/GitHub/vade-app/vade-runtime status --short)",
+      "Bash(ln -s ../vade-runtime/.claude/settings.json /Users/venpopov/GitHub/vade-app/.claude/settings.json)",
+      "Bash(python3 *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if 'model' in k.lower\\(\\) or k in ['model','defaultModel','effortLevel']}, indent=2\\)\\)\")",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/venpopov/.claude/settings.json'\\)\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/venpopov/GitHub/vade-app/vade-runtime/.claude/settings.json'\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if k not in ['hooks','permissions','env']}, indent=2\\)\\)\")",
+      "Bash(rm /Users/venpopov/GitHub/vade-app/.claude/settings.json)",
+      "Bash(claude --version)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
