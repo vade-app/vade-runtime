@@ -216,9 +216,7 @@
       "mcp__vade-canvas__getCanvasState",
       "Bash(xargs -0 cat)",
       "mcp__claude_ai_Mem0__add_memory",
-      "mcp__agentmail__get_inbox",
-      "mcp__agentmail__list_inboxes",
-      "mcp__agentmail__list_threads"
+      "mcp__agentmail__*"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
