@@ -101,13 +101,13 @@ fi
 # B1: re-run the resolver for each expected hook name
 B1_ok=true
 B1_detail=""
-for name in session-start-sync coo-bootstrap coo-identity-digest discussions-digest session-lifecycle; do
+for name in session-start-sync coo-bootstrap coo-identity-digest discussions-digest session-lifecycle session-idle-watchdog; do
   if ! [ -f "$RUNTIME_DIR/scripts/$name.sh" ]; then
     B1_ok=false
     B1_detail="${B1_detail}missing: $name.sh; "
   fi
 done
-[ "$B1_ok" = true ] && B1_detail="all 5 hook scripts present in runtime"
+[ "$B1_ok" = true ] && B1_detail="all 6 hook scripts present in runtime"
 _add B1 "$B1_ok" "$B1_detail"
 
 # B3: hook chain outcomes for the current session in boot.log.

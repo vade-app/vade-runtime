@@ -8,7 +8,8 @@
           { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-bootstrap" },
           { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" memo-index" },
           { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-identity-digest" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" discussions-digest" }
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" discussions-digest" },
+          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-idle-watchdog --start" }
         ]
       },
       {

@@ -84,6 +84,41 @@ if [ "$MODE" = "start" ]; then
     echo ""
   fi
 
+  # Prior idle-close stub logs: if the watchdog
+  # (vade-app/vade-agent-logs#67) fired a mechanical close on a recent
+  # session, the next interactive COO owes a real summary. Surface
+  # any unpaired stubs from the last 3 days so the agent doesn't have
+  # to discover them.
+  agent_logs_dir=""
+  for _cand in "$HOME/GitHub/vade-app/vade-agent-logs" "/home/user/vade-agent-logs"; do
+    if [ -d "$_cand" ]; then agent_logs_dir="$_cand"; break; fi
+  done
+  if [ -n "$agent_logs_dir" ] && [ -d "$agent_logs_dir/sessions" ]; then
+    pending_stubs="$(find "$agent_logs_dir/sessions" -type f \
+      -name 'coo-idle-close-*.md' -mtime -3 2>/dev/null | sort)"
+    if [ -n "$pending_stubs" ]; then
+      while IFS= read -r stub; do
+        [ -z "$stub" ] && continue
+        sid="$(basename "$stub" .md)"
+        sid="${sid#coo-idle-close-}"
+        # Skip stubs that already have a paired summary file in the same dir.
+        stub_dir="$(dirname "$stub")"
+        if [ -f "$stub_dir/coo-summary-on-${sid}.md" ]; then continue; fi
+        if [ -z "${idle_close_header_printed:-}" ]; then
+          echo "  • Prior session(s) ended on idle (vade-app/vade-agent-logs#67):"
+          idle_close_header_printed=1
+        fi
+        echo "      - ${stub#"$agent_logs_dir/"}"
+      done <<< "$pending_stubs"
+      if [ -n "${idle_close_header_printed:-}" ]; then
+        echo "    These owe a real session summary. Append a sibling"
+        echo "    coo-summary-on-<sessionId>.md in the same dir, or amend"
+        echo "    the stub in place with what was worked on."
+        echo ""
+      fi
+    fi
+  fi
+
   echo "Full SOP: vade-coo-memory/coo/mem0_sop.md"
   echo "───────────────────────────────────────────────────────────────"
   exit 0
