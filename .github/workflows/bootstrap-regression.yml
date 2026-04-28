@@ -117,3 +117,6 @@ jobs:
 
       - name: Transcript export hook — smoke (dry-run, isolated $HOME)
         run: python3 "$GITHUB_WORKSPACE/scripts/ci/test-transcript-export.py"
+
+      - name: Self-echo filter — UserPromptSubmit hook smoke
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/test-filter-webhook-self-echo.sh"
