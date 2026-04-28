@@ -156,5 +156,38 @@ echo "  4. If this session was the COO working in vade-coo-memory,"
 echo "     also write a session log to vade-agent-logs per that"
 echo "     repo's CLAUDE.md template."
 echo ""
+
+# Step 5 (conditional): the transcript-export Stop hook fires before
+# this script (settings.json hooks.Stop array order), so by now any
+# meta.json or export-error.txt sidecar is already on disk. Surface
+# the file paths so the agent commits them as part of step 4. Skip
+# the step entirely when nothing was dropped (hook missing, deps
+# missing, dry-run, etc.) — silence is the better signal than a stale
+# instruction.
+agent_logs_dir=""
+for _cand in "$HOME/GitHub/vade-app/vade-agent-logs" "/home/user/vade-agent-logs"; do
+  if [ -d "$_cand" ]; then agent_logs_dir="$_cand"; break; fi
+done
+if [ -n "$agent_logs_dir" ] && [ -d "$agent_logs_dir/transcripts" ]; then
+  recent_drops="$(find "$agent_logs_dir/transcripts" -type f \
+    \( -name '*.meta.json' -o -name '*.export-error.txt' \) \
+    -mmin -60 2>/dev/null | sort)"
+  if [ -n "$recent_drops" ]; then
+    echo "  5. The transcript-export Stop hook fired this session"
+    echo "     (vade-app/vade-agent-logs#64 Batch 2). Files in"
+    echo "     vade-agent-logs to commit alongside your session log:"
+    while IFS= read -r _f; do
+      [ -n "$_f" ] && echo "       - ${_f#"$agent_logs_dir/"}"
+    done <<< "$recent_drops"
+    echo ""
+    echo "     The redacted+encrypted ciphertext is already in R2 — the"
+    echo "     .meta.json sidecar carries the bucket+key. Sidecars are"
+    echo "     append-only; commit verbatim. If a .export-error.txt is"
+    echo "     present instead of (or alongside) a .meta.json, surface"
+    echo "     the failure in your session log so future COOs can see it."
+    echo ""
+  fi
+fi
+
 echo "Full SOP: vade-coo-memory/coo/mem0_sop.md"
 echo "───────────────────────────────────────────────────────────────"

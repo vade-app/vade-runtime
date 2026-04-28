@@ -4,23 +4,48 @@
       {
         "matcher": "startup",
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-start-sync" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-bootstrap" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" memo-index" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-identity-digest" },
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" discussions-digest" }
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-start-sync"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-bootstrap"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" memo-index"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" coo-identity-digest"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" discussions-digest"
+          }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle" }
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end" }
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-end-transcript-export"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" session-lifecycle --end"
+          }
         ]
       }
     ],
@@ -28,7 +53,10 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" auto-subscribe-pr" }
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/vade-hooks/dispatch.sh\" auto-subscribe-pr"
+          }
         ]
       }
     ]
@@ -47,7 +75,6 @@
       "mcp__mem0__list_entities",
       "mcp__mem0__list_events",
       "mcp__mem0__get_event_status",
-
       "mcp__github__get_me",
       "mcp__github__get_file_contents",
       "mcp__github__get_commit",
@@ -72,9 +99,7 @@
       "mcp__github__search_pull_requests",
       "mcp__github__search_repositories",
       "mcp__github__search_users",
-
       "mcp__2f248645-8699-4e80-a5b1-5b991f64fb8c__*",
-
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -100,9 +125,7 @@
       "Bash(git restore:*)",
       "Bash(git config --get:*)",
       "Bash(git ls-files:*)",
-
       "Bash(gh:*)",
-
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
@@ -130,18 +153,15 @@
       "Bash(cut:*)",
       "Bash(awk:*)",
       "Bash(sed -n:*)",
-
       "Bash(bash *vade-runtime/scripts/*:*)",
       "Bash(bash *.claude/commands/_lib/*:*)",
       "Bash(bash \"$HOME/.claude/vade-hooks/dispatch.sh\":*)",
-
       "Read",
       "Edit",
       "Write",
       "TodoWrite",
       "Skill",
       "Agent",
-
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:tldraw.dev)",
       "WebFetch(domain:github.com)",
