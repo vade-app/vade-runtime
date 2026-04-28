@@ -598,6 +598,20 @@ GH_VERSION_DEFAULT="2.91.0"
 # api.mem0.ai (vade-runtime#36/#109). Pinned because the upstream repo
 # (mem0ai/mem0-mcp) was archived in 2025-12 — bump deliberately.
 MEM0_MCP_SERVER_VERSION_DEFAULT="0.2.1"
+# Binary vendor bundle. Single tarball published by
+# .github/workflows/publish-binary-vendor.yml containing op + gh + uv +
+# mem0-mcp-server (with mem0's uv-managed venv tree) at production
+# layout under .local/. ensure_binaries_from_vendor curls it from this
+# repo's GitHub Release asset endpoint with $GITHUB_MCP_PAT and untars
+# to /home/user/, replacing four per-CDN fetches with one
+# release-assets.githubusercontent.com fetch. github.com-class origin,
+# already-authenticated, snapshot-cache compatible (the untarred
+# /home/user/.local/ tree survives snapshot → resume). Adopted via B1
+# reframe of briefing 004-cloud-binary-vendor (docker-pull variant
+# infeasible on cloud_default; see follow-up issue).
+BINARY_VENDOR_REPO_DEFAULT="vade-app/vade-runtime"
+BINARY_VENDOR_TAG_DEFAULT="binary-vendor-latest"
+BINARY_VENDOR_ASSET_DEFAULT="binary-vendor.tar.gz"
 # Hardcoded production fingerprints; env-overridable so the bootstrap-
 # regression CI (.github/workflows/bootstrap-regression.yml) can
 # substitute fixture-key fingerprints without forking install_coo_ssh_keys.
@@ -624,6 +638,152 @@ _snapshot_user_bindir() {
   else
     printf '%s/.local/bin' "$HOME"
   fi
+}
+
+# Fetch the consolidated binary vendor bundle (op + gh + uv +
+# mem0-mcp-server) from this repo's GitHub Release and untar it into
+# the snapshot-persistent .local/ tree. One github.com-class fetch
+# replaces four per-CDN fetches; ensure_op_cli / ensure_gh_cli /
+# ensure_mem0_mcp_server short-circuit on `check_cmd` after this runs.
+#
+# Cloud-only (root + /home/user). On macOS / non-cloud the bundle's
+# Linux binaries and absolute /home/user/.local/... paths don't apply,
+# so this function returns 0 without action and the per-binary
+# ensure_*_cli paths handle install (brew on macOS, direct fetch on
+# Linux non-cloud).
+#
+# Best-effort. On any failure (curl, sha mismatch, untar) returns 1
+# without mutating the bindir; cloud-setup.sh logs the warning and
+# continues to ensure_*_cli direct-fetch as fallback. Per the briefing
+# 004 lean (item 4): keep direct-fetch fallback for the first iteration
+# until ghcr.io / release-asset reliability is measured in production.
+#
+# Disable: set VADE_BINARY_VENDOR_DISABLE=1 to skip entirely. Used by
+# bootstrap-regression CI where the release-asset fetch isn't mocked.
+#
+# Pin: BINARY_VENDOR_BUNDLE_SHA256 (set from versions.lock or env)
+# is sha256-verified against the downloaded tarball before untar.
+# Without a pin, the function logs a warning and proceeds — first-PR
+# adoption ships before the first publish has produced a SHA.
+ensure_binaries_from_vendor() {
+  if [ "${VADE_BINARY_VENDOR_DISABLE:-0}" = "1" ]; then
+    log "binary vendor: VADE_BINARY_VENDOR_DISABLE=1; skipping"
+    return 0
+  fi
+
+  # Cloud-only gate. Local Mac and CI sandboxes (non-root or no
+  # /home/user) fall through to the per-binary ensure_*_cli paths.
+  if [ "$(id -u)" != "0" ] || [ ! -d /home/user ]; then
+    return 0
+  fi
+
+  local bindir
+  bindir="$(_snapshot_user_bindir)"
+  case ":$PATH:" in
+    *":$bindir:"*) ;;
+    *) export PATH="$bindir:$PATH" ;;
+  esac
+
+  # Idempotent short-circuit: if all four binaries are already present
+  # (prior bundle untar, Dockerfile bake, or per-binary ensure_*_cli),
+  # skip the fetch. Saves the round-trip on every snapshot rebuild and
+  # keeps the cloud-setup.sh log quiet on the steady-state path.
+  if check_cmd op && check_cmd gh && check_cmd uv && check_cmd mem0-mcp-server; then
+    log "binary vendor: all four binaries present at $bindir; skipping fetch"
+    return 0
+  fi
+
+  if [ -z "${GITHUB_MCP_PAT:-}" ]; then
+    log "binary vendor: GITHUB_MCP_PAT unset; cannot fetch private release asset"
+    return 1
+  fi
+
+  local repo="${BINARY_VENDOR_REPO:-$BINARY_VENDOR_REPO_DEFAULT}"
+  local tag="${BINARY_VENDOR_TAG:-$BINARY_VENDOR_TAG_DEFAULT}"
+  local asset="${BINARY_VENDOR_ASSET:-$BINARY_VENDOR_ASSET_DEFAULT}"
+  local expected_sha="${BINARY_VENDOR_BUNDLE_SHA256:-}"
+
+  local tmp
+  tmp="$(mktemp -d)"
+  local bundle="$tmp/bundle.tar.gz"
+
+  log "binary vendor: fetching $repo@$tag/$asset"
+
+  # Resolve asset_id, then download via the API octet-stream endpoint.
+  # Two-step rather than `gh release download` because gh isn't
+  # guaranteed present yet (this function runs before ensure_gh_cli).
+  local release_json
+  if ! release_json="$(retry 3 curl -fsSL \
+      -H "Authorization: token $GITHUB_MCP_PAT" \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/$repo/releases/tags/$tag" 2>/dev/null)"; then
+    log "binary vendor: release lookup failed for $repo@$tag"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local asset_id
+  # jq isn't guaranteed on cloud either; use python3 (always present
+  # per Dockerfile and Anthropic base image).
+  asset_id="$(printf '%s' "$release_json" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for a in data.get("assets", []):
+    if a.get("name") == sys.argv[1]:
+        print(a.get("id"))
+        break
+' "$asset" 2>/dev/null)"
+
+  if [ -z "$asset_id" ]; then
+    log "binary vendor: asset $asset not found in release $tag"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if ! retry 3 curl -fsSL \
+      -H "Authorization: token $GITHUB_MCP_PAT" \
+      -H "Accept: application/octet-stream" \
+      -o "$bundle" \
+      "https://api.github.com/repos/$repo/releases/assets/$asset_id"; then
+    log "binary vendor: bundle download failed (asset_id=$asset_id)"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local actual_sha
+  actual_sha="$(sha256sum "$bundle" | awk '{print $1}')"
+  if [ -n "$expected_sha" ]; then
+    if [ "$actual_sha" != "$expected_sha" ]; then
+      log "binary vendor: sha256 mismatch (expected=$expected_sha actual=$actual_sha)"
+      rm -rf "$tmp"
+      return 1
+    fi
+    log "binary vendor: sha256 verified"
+  else
+    log "binary vendor: no BINARY_VENDOR_BUNDLE_SHA256 pin; proceeding (sha=$actual_sha)"
+  fi
+
+  # Untar to /home/user; tarball contains .local/{bin,share}/...
+  if ! tar -xzf "$bundle" -C /home/user; then
+    log "binary vendor: untar failed"
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+
+  # Verify each binary is now present and executable.
+  local missing=""
+  for b in op gh uv mem0-mcp-server; do
+    if [ ! -x "$bindir/$b" ]; then
+      missing="$missing $b"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    log "binary vendor: untar succeeded but missing:$missing"
+    return 1
+  fi
+
+  log "binary vendor: installed op gh uv mem0-mcp-server to $bindir"
 }
 
 ensure_op_cli() {

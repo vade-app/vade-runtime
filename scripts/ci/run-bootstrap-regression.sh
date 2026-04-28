@@ -119,8 +119,14 @@ export PATH="$MOCK_DIR/bin:$PATH"
 # /home/user/.local/bin (when running as root with that dir present),
 # shadowing our mock op with a real one.
 export VADE_BINDIR_OVERRIDE="$MOCK_DIR/bin"
+# Skip the binary-vendor fetch path in CI — it would try to hit
+# api.github.com/repos/.../releases/... with a $GITHUB_MCP_PAT we don't
+# have here, and even with one, the release-asset endpoint isn't
+# mocked. ensure_*_cli's per-binary mocks handle the install side.
+export VADE_BINARY_VENDOR_DISABLE=1
 log "Mocks on PATH: op=$(command -v op) curl=$(command -v curl) (real curl: $REAL_CURL)"
 log "VADE_BINDIR_OVERRIDE=$VADE_BINDIR_OVERRIDE"
+log "VADE_BINARY_VENDOR_DISABLE=$VADE_BINARY_VENDOR_DISABLE"
 
 # ── 4. Isolated HOME ─────────────────────────────────────────────
 log "Provisioning isolated HOME at $TEST_HOME"

@@ -84,6 +84,21 @@ fi
 
 print_versions
 
+# Fetch the consolidated binary vendor bundle (op + gh + uv +
+# mem0-mcp-server) in one curl from the vade-runtime release asset,
+# replacing four per-CDN fetches at snapshot-build time. Best-effort:
+# on any failure (missing pin, network, sha mismatch) the per-binary
+# ensure_*_cli paths below run as fallback. Briefing 004 / B1 reframe;
+# read BINARY_VENDOR_BUNDLE_SHA256 from versions.lock if pinned and
+# export so the function can sha256-verify before untar.
+BINARY_VENDOR_BUNDLE_SHA256="$(awk '$1 == "binary_vendor_bundle" && $2 != "-" { print $2; exit }' "$RUNTIME_DIR/versions.lock" 2>/dev/null || true)"
+export BINARY_VENDOR_BUNDLE_SHA256
+if ensure_binaries_from_vendor; then
+  build_log_record OK "cloud-setup: binary vendor bundle installed"
+else
+  build_log_record WARN "cloud-setup: binary vendor bundle unavailable; falling back to per-binary direct fetch"
+fi
+
 # Install the op CLI at snapshot-build time so the SessionStart-hook
 # bootstrap fallback never has to fetch it through the egress proxy
 # mid-session. The binary lands in /home/user/.local/bin/op which

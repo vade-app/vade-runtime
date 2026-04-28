@@ -1,0 +1,276 @@
+name: Publish binary vendor bundle
+
+# Builds a single tarball containing the four flake-prone binaries that
+# scripts/cloud-setup.sh fetches from third-party CDNs at cloud-snapshot
+# build time (op, gh, uv, mem0-mcp-server), and publishes it as a
+# GitHub Release asset on this repo. cloud-setup.sh's
+# ensure_binaries_from_vendor then fetches the bundle in one curl with
+# $GITHUB_MCP_PAT, replacing four per-CDN fetches with one
+# github.com-class fetch from an already-authenticated origin.
+#
+# Why a release asset, not a ghcr.io image (briefing #004 directionally,
+# B1 reframe): the cloud sandbox's docker daemon is non-functional at
+# session time (CAP_SYS_RESOURCE dropped, network-namespace creation
+# denied — see follow-up issue), so docker pull from ghcr.io can't run
+# in cloud-setup.sh. release-assets.githubusercontent.com is in the
+# Trusted-default allowlist alongside ghcr.io, so the structural
+# benefits the briefing identified (one artifact, github.com class,
+# PAT-already-authenticated, snapshot-cache compatible) all hold for
+# release assets without the daemon dependency.
+#
+# The same Dockerfile install steps are replicated here (in an Ubuntu
+# container, no docker-in-docker required) with absolute target paths
+# matching production layout (/home/user/.local/...), so mem0-mcp-server's
+# uv-managed venv shebangs resolve unchanged when the bundle is untarred
+# at cloud-setup.sh time.
+#
+# Tag scheme: binary-vendor-<short-sha> per-build + binary-vendor-latest
+# moving tag for cloud-setup.sh to fetch. SHA256 of the bundle is
+# pinned in versions.lock; ensure_binaries_from_vendor verifies before
+# install.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'versions.lock'
+      - '.github/workflows/publish-binary-vendor.yml'
+  workflow_dispatch:
+    inputs:
+      tag_suffix:
+        description: "Override tag suffix (default: short SHA)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-binary-vendor
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Install build prereqs
+        run: |
+          set -eux
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates git unzip tar jq python3 python3-venv \
+            xz-utils
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Read pinned versions from versions.lock
+        id: versions
+        run: |
+          set -eux
+          read_pin() {
+            local key="$1"
+            awk -v k="$key" '$1 == k { print $2; exit }' versions.lock
+          }
+          OP_VERSION="$(read_pin op)"
+          GH_VERSION="$(read_pin gh)"
+          UV_VERSION="$(read_pin uv)"
+          MEM0_MCP_VERSION="$(read_pin mem0-mcp-server)"
+          test -n "$OP_VERSION"
+          test -n "$GH_VERSION"
+          test -n "$UV_VERSION"
+          test -n "$MEM0_MCP_VERSION"
+          echo "op=$OP_VERSION"   >> "$GITHUB_OUTPUT"
+          echo "gh=$GH_VERSION"   >> "$GITHUB_OUTPUT"
+          echo "uv=$UV_VERSION"   >> "$GITHUB_OUTPUT"
+          echo "mem0=$MEM0_MCP_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Stage production layout under /home/user/.local
+        run: |
+          set -eux
+          # Production cloud layout: /home/user/.local/{bin,share}/...
+          # mem0-mcp-server is uv-installed and its venv shebangs encode
+          # the absolute install path, so we must build at the exact
+          # path the bundle will untar to on cloud.
+          mkdir -p /home/user/.local/bin
+          mkdir -p /home/user/.local/share/uv-tools
+
+      - name: Install op CLI
+        env:
+          OP_VERSION: ${{ steps.versions.outputs.op }}
+        run: |
+          set -eux
+          arch="$(dpkg --print-architecture)"
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 5 --retry-delay 2 \
+            "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_VERSION}/op_linux_${arch}_v${OP_VERSION}.zip" \
+            -o "$tmp/op.zip"
+          unzip -qo "$tmp/op.zip" -d "$tmp"
+          install -m 0755 "$tmp/op" /home/user/.local/bin/op
+          /home/user/.local/bin/op --version
+
+      - name: Install gh CLI
+        env:
+          GH_VERSION: ${{ steps.versions.outputs.gh }}
+        run: |
+          set -eux
+          arch="$(dpkg --print-architecture)"
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 5 --retry-delay 2 \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" \
+            -o "$tmp/gh.tgz"
+          tar -xzf "$tmp/gh.tgz" -C "$tmp"
+          install -m 0755 "$tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /home/user/.local/bin/gh
+          /home/user/.local/bin/gh --version
+
+      - name: Install uv
+        env:
+          UV_VERSION: ${{ steps.versions.outputs.uv }}
+        run: |
+          set -eux
+          arch="$(dpkg --print-architecture)"
+          case "$arch" in
+            amd64) uv_arch="x86_64-unknown-linux-gnu" ;;
+            arm64) uv_arch="aarch64-unknown-linux-gnu" ;;
+            *) echo "Unsupported arch: $arch" >&2; exit 1 ;;
+          esac
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 5 --retry-delay 2 \
+            "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" \
+            -o "$tmp/uv.tgz"
+          tar -xzf "$tmp/uv.tgz" -C "$tmp"
+          install -m 0755 "$tmp/uv-${uv_arch}/uv"  /home/user/.local/bin/uv
+          install -m 0755 "$tmp/uv-${uv_arch}/uvx" /home/user/.local/bin/uvx
+          /home/user/.local/bin/uv --version
+
+      - name: Install mem0-mcp-server via uv tool
+        env:
+          MEM0_MCP_VERSION: ${{ steps.versions.outputs.mem0 }}
+        run: |
+          set -eux
+          UV_TOOL_BIN_DIR=/home/user/.local/bin \
+          UV_TOOL_DIR=/home/user/.local/share/uv-tools \
+            /home/user/.local/bin/uv tool install --python python3 \
+            "mem0-mcp-server==${MEM0_MCP_VERSION}"
+          test -x /home/user/.local/bin/mem0-mcp-server
+          # Sanity: shebang resolves inside /home/user/.local
+          head -1 /home/user/.local/bin/mem0-mcp-server | grep -q "/home/user/.local"
+
+      - name: Tar bundle
+        id: tar
+        run: |
+          set -eux
+          cd /home/user
+          tar --owner=root --group=root -czf /tmp/binary-vendor.tar.gz .local
+          ls -la /tmp/binary-vendor.tar.gz
+          sha256sum /tmp/binary-vendor.tar.gz | tee /tmp/binary-vendor.sha256
+          BUNDLE_SHA="$(awk '{print $1}' /tmp/binary-vendor.sha256)"
+          BUNDLE_SIZE="$(stat -c %s /tmp/binary-vendor.tar.gz)"
+          echo "sha256=$BUNDLE_SHA"   >> "$GITHUB_OUTPUT"
+          echo "size=$BUNDLE_SIZE"    >> "$GITHUB_OUTPUT"
+
+      - name: Compute tag
+        id: tag
+        run: |
+          set -eux
+          if [ -n "${{ github.event.inputs.tag_suffix }}" ]; then
+            suffix="${{ github.event.inputs.tag_suffix }}"
+          else
+            suffix="$(echo "${{ github.sha }}" | cut -c1-7)"
+          fi
+          echo "name=binary-vendor-${suffix}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate manifest
+        run: |
+          set -eux
+          cat > /tmp/binary-vendor-manifest.json <<EOF
+          {
+            "tag": "${{ steps.tag.outputs.name }}",
+            "git_sha": "${{ github.sha }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "bundle_sha256": "${{ steps.tar.outputs.sha256 }}",
+            "bundle_size": ${{ steps.tar.outputs.size }},
+            "binaries": {
+              "op": "${{ steps.versions.outputs.op }}",
+              "gh": "${{ steps.versions.outputs.gh }}",
+              "uv": "${{ steps.versions.outputs.uv }}",
+              "mem0-mcp-server": "${{ steps.versions.outputs.mem0 }}"
+            },
+            "untar_target": "/home/user",
+            "schema_version": "1.0"
+          }
+          EOF
+          cat /tmp/binary-vendor-manifest.json
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+          BUNDLE_SHA: ${{ steps.tar.outputs.sha256 }}
+        run: |
+          set -eux
+          # Per-build tag (immutable). Body documents the pin a
+          # consumer's versions.lock entry must match.
+          /home/user/.local/bin/gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "Binary vendor bundle ${TAG}" \
+            --notes "Bundle SHA256: \`${BUNDLE_SHA}\`
+
+          Pinned versions:
+          - op ${{ steps.versions.outputs.op }}
+          - gh ${{ steps.versions.outputs.gh }}
+          - uv ${{ steps.versions.outputs.uv }}
+          - mem0-mcp-server ${{ steps.versions.outputs.mem0 }}
+
+          Untar target: \`/home/user\` (yields \`/home/user/.local/{bin,share}/...\`).
+
+          Set \`binary_vendor_bundle <sha>\` in versions.lock to adopt." \
+            /tmp/binary-vendor.tar.gz \
+            /tmp/binary-vendor-manifest.json \
+            /tmp/binary-vendor.sha256
+
+          # Moving tag for the cloud fetch path. Delete-and-recreate
+          # because gh release doesn't support edit-tag in place.
+          if /home/user/.local/bin/gh release view binary-vendor-latest \
+              --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            /home/user/.local/bin/gh release delete binary-vendor-latest \
+              --repo "${{ github.repository }}" --yes --cleanup-tag
+          fi
+          /home/user/.local/bin/gh release create binary-vendor-latest \
+            --repo "${{ github.repository }}" \
+            --title "Binary vendor bundle (latest → ${TAG})" \
+            --notes "Moving tag pointing at ${TAG}.
+
+          SHA256: \`${BUNDLE_SHA}\`
+
+          \`scripts/lib/common.sh::ensure_binaries_from_vendor\` fetches from this tag." \
+            /tmp/binary-vendor.tar.gz \
+            /tmp/binary-vendor-manifest.json \
+            /tmp/binary-vendor.sha256
+
+      - name: Summary
+        run: |
+          {
+            echo "## Binary vendor bundle published"
+            echo ""
+            echo "- Tag: \`${{ steps.tag.outputs.name }}\` (+ \`binary-vendor-latest\`)"
+            echo "- SHA256: \`${{ steps.tar.outputs.sha256 }}\`"
+            echo "- Size: ${{ steps.tar.outputs.size }} bytes"
+            echo ""
+            echo "### Versions baked"
+            echo "- op ${{ steps.versions.outputs.op }}"
+            echo "- gh ${{ steps.versions.outputs.gh }}"
+            echo "- uv ${{ steps.versions.outputs.uv }}"
+            echo "- mem0-mcp-server ${{ steps.versions.outputs.mem0 }}"
+            echo ""
+            echo "Update \`versions.lock\` with:"
+            echo ""
+            echo "    binary_vendor_bundle ${{ steps.tar.outputs.sha256 }}"
+          } >> "$GITHUB_STEP_SUMMARY"
