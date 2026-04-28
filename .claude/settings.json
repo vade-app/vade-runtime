@@ -208,7 +208,12 @@
       "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/venpopov/.claude/settings.json'\\)\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
       "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/venpopov/GitHub/vade-app/vade-runtime/.claude/settings.json'\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if k not in ['hooks','permissions','env']}, indent=2\\)\\)\")",
       "Bash(rm /Users/venpopov/GitHub/vade-app/.claude/settings.json)",
-      "Bash(claude --version)"
+      "Bash(claude --version)",
+      "Bash(VADE_CLOUD_STATE_DIR=/Users/venpopov/.vade/local-state bash *)",
+      "Bash(bash *)",
+      "Bash(node *)",
+      "Bash(flyctl logs *)",
+      "mcp__vade-canvas__getCanvasState"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
