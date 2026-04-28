@@ -33,6 +33,14 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 WORKSPACE_ROOT_DERIVED="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# common.sh seeds VADE_CLOUD_STATE_DIR with a cloud-host default (/home/user/.vade-cloud-state);
+# on Mac local-setup.sh exports ~/.vade/local-state but hook subprocesses don't inherit its env.
+# Redirect when the cloud path is absent and the local path exists so integrity-check.sh (and
+# other hooks) write to the correct location. vade-runtime#175.
+if [ ! -d "$VADE_CLOUD_STATE_DIR" ] && [ -d "$HOME/.vade/local-state" ]; then
+  VADE_CLOUD_STATE_DIR="$HOME/.vade/local-state"
+fi
+
 boot_log_record session-start-sync start
 sync_claude_config "$SCRIPT_DIR/../.claude" "$WORKSPACE_ROOT_DERIVED/.claude"
 # Aggregate per-repo primitives from data-owning repos. Per the
@@ -61,6 +69,10 @@ ensure_gh_symlink_on_path
 # auto-carries the Claude Code session URL. MEMO 2026-04-26-02
 # (issue #150). Idempotent via marker grep.
 ensure_gh_coo_wrap "$SCRIPT_DIR/gh-coo-wrap.sh"
+# Persist VADE_CLOUD_STATE_DIR into ~/.claude/settings.json env so hook subprocesses
+# (integrity-check.sh, coo-identity-digest.sh, etc.) inherit the correct path. Must run
+# before integrity-check.sh so the JSON lands at the right location. vade-runtime#175.
+merge_coo_settings_paths
 # Emit integrity-check.json so its snapshot is on disk before the
 # digest hook runs (which may surface a one-line summary). Non-fatal.
 bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
