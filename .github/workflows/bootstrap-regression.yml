@@ -104,3 +104,6 @@ jobs:
 
       - name: Secret Registration Rule — common.sh ↔ redaction config parity
         run: bash "$GITHUB_WORKSPACE/scripts/ci/check-secret-registration.sh"
+
+      - name: Self-echo filter — UserPromptSubmit hook smoke
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/test-filter-webhook-self-echo.sh"
