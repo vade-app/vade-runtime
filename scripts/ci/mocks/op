@@ -56,6 +56,14 @@ case "${1:-}" in
         # and never decrypts a real ciphertext.
         echo "AGE-SECRET-KEY-1CIMOCK000000000000000000000000000000000000000000000000"
         ;;
+      "op://COO/vade-canvas-coo/credential")
+        # Mocked vade-canvas MCP bearer (vade-core#93). Real value is the
+        # operator-shaped opaque bearer that vade-canvas MCP accepts via
+        # Fly's VADE_AUTH_TOKENS.agents[]; mock returns a non-shape
+        # placeholder so the CI integrity-check passes without a real
+        # canvas roundtrip.
+        echo "vat_CIMOCK_VADE_AUTH_TOKEN_DO_NOT_USE"
+        ;;
       "op://COO/vade-coo-auth/private key")
         cat "$KEYDIR/vade-coo-auth"
         ;;

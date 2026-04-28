@@ -134,7 +134,9 @@ no-op and the cloud env comes up in plain VADE mode.
 ### 1Password vault contract
 
 The service account must have **read** access to a vault named `COO`
-containing five items:
+containing the following items. Items marked *best-effort* may be
+absent — their absence warns and disables the corresponding feature
+without blocking boot.
 
 | Item reference | Type | What it holds |
 |---|---|---|
@@ -143,6 +145,7 @@ containing five items:
 | `op://COO/mem0-vade-coo` | API Credential | Mem0 Platform API key (`credential` field; prefix `m0-`) — powers the `mem0-rest.sh` break-glass fallback when the Mem0 MCP OAuth transport is degraded |
 | `op://COO/vade-coo-auth` | SSH Key | GitHub auth key (`ed25519`) |
 | `op://COO/vade-coo-sign` | SSH Key | GitHub signing key (`ed25519`) |
+| `op://COO/vade-canvas-coo` | API Credential | *Best-effort.* vade-canvas MCP bearer (`credential` field) — resolves the `${VADE_AUTH_TOKEN}` placeholder in `vade-core/.mcp.json`. Bearer must also appear in Fly's `VADE_AUTH_TOKENS.agents[]` for vade-canvas to accept it (see vade-core `docs/auth.md`). Absent until vade-core#93 follow-up creates it. |
 
 Fingerprints validated at boot:
 
