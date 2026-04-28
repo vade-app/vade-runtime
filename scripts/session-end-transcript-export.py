@@ -48,9 +48,18 @@ Read at run time via `op read` (no env exposure):
   op://COO/r2-transcripts/endpoint  — R2 S3-compat URL
   op://COO/r2-transcripts/bucket    — bucket name
 Optional:
-  CLAUDE_SESSION_ID  — override session-id resolution
-  VADE_AGENT_LOGS_DIR  — override vade-agent-logs working tree resolution
-  VADE_TRANSCRIPT_EXPORT_DRY_RUN=1  — skip R2 upload (CI / smoke-test)
+  CLAUDE_SESSION_ID                  — override session-id resolution
+  VADE_AGENT_LOGS_DIR                — override vade-agent-logs working
+                                       tree resolution
+  VADE_TRANSCRIPT_EXPORT_DRY_RUN=1   — skip R2 upload AND skip auto-PR
+                                       (CI / smoke-test)
+  VADE_TRANSCRIPT_EXPORT_NO_PR=1     — skip auto-PR open only (still
+                                       upload + write sidecar; useful
+                                       when running locally without a
+                                       network or PAT)
+  GITHUB_MCP_PAT                     — required for auto-PR-on-meta;
+                                       absence is a soft skip, not an
+                                       error (per vade-runtime#148 A)
 """
 
 from __future__ import annotations
@@ -304,6 +313,180 @@ def _emit_export_error(sidecar_dir: Path, session_id: str, exc: BaseException) -
     _stderr(f"wrote export-error: {err_path}")
 
 
+def _open_meta_pr(
+    agent_logs_dir: Path,
+    sidecar_path: Path,
+    session_id: str,
+) -> str | None:
+    """Open a single-file pure-add PR carrying just the new meta.json.
+
+    Auto-merge happens via the Night's Watch §4 pure-add gate
+    (MEMO-2026-04-26-04 §4 carve-out for own-author log PRs in
+    vade-agent-logs).
+
+    Best-effort: any failure is logged via export-error.txt and we
+    return None. Never raises, never blocks session end.
+
+    Returns the PR URL on success, None otherwise.
+
+    Skipped (no error) when:
+      - VADE_TRANSCRIPT_EXPORT_DRY_RUN=1 or VADE_TRANSCRIPT_EXPORT_NO_PR=1
+      - GITHUB_MCP_PAT not set
+      - `gh` binary not on PATH
+      - agent_logs_dir is not a git working tree
+      - the auto-meta branch already exists upstream (idempotent re-fire)
+    """
+    if os.environ.get("VADE_TRANSCRIPT_EXPORT_DRY_RUN", "").strip() == "1":
+        _stderr("auto-PR skipped (DRY_RUN=1)")
+        return None
+    if os.environ.get("VADE_TRANSCRIPT_EXPORT_NO_PR", "").strip() == "1":
+        _stderr("auto-PR skipped (NO_PR=1)")
+        return None
+
+    pat = os.environ.get("GITHUB_MCP_PAT", "").strip()
+    if not pat:
+        _stderr("auto-PR skipped (GITHUB_MCP_PAT not set)")
+        return None
+    if not shutil.which("gh"):
+        _stderr("auto-PR skipped (gh binary not on PATH)")
+        return None
+    if not (agent_logs_dir / ".git").exists():
+        _stderr(f"auto-PR skipped ({agent_logs_dir} is not a git tree)")
+        return None
+    if not sidecar_path.is_file():
+        _stderr(f"auto-PR skipped (sidecar missing: {sidecar_path})")
+        return None
+
+    short_sid = session_id[:12]
+    branch = f"claude/auto-meta-{short_sid}"
+    rel_sidecar = str(sidecar_path.relative_to(agent_logs_dir))
+
+    git_env = {**os.environ, "GH_TOKEN": pat}
+
+    def _git(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(agent_logs_dir), *args],
+            check=False,
+            env=git_env,
+            capture_output=capture,
+            text=capture,
+            timeout=30,
+        )
+
+    # Idempotent guard: if the branch exists on origin already, abort.
+    ls_remote = _git("ls-remote", "--heads", "origin", branch, capture=True)
+    if ls_remote.returncode == 0 and ls_remote.stdout.strip():
+        _stderr(f"auto-PR skipped (branch {branch} exists on origin)")
+        return None
+
+    # Capture current HEAD so we can restore it after the auto-PR work.
+    head_proc = _git("rev-parse", "HEAD", capture=True)
+    if head_proc.returncode != 0:
+        _stderr(f"auto-PR skipped (HEAD unresolvable: {head_proc.stderr.strip()})")
+        return None
+    original_ref_proc = _git("rev-parse", "--abbrev-ref", "HEAD", capture=True)
+    original_ref = (
+        original_ref_proc.stdout.strip() if original_ref_proc.returncode == 0 else ""
+    )
+
+    try:
+        # Fetch origin/main and create the auto-meta branch from it. Use
+        # a worktree-free flow: stash, switch, commit, switch back.
+        fetch = _git("fetch", "origin", "main", capture=True)
+        if fetch.returncode != 0:
+            _stderr(f"auto-PR fetch origin/main failed: {fetch.stderr.strip()}")
+            return None
+
+        # Stage just the new meta.json against the index AT origin/main
+        # by doing the work on the new branch.
+        switch = _git("switch", "-c", branch, "origin/main", capture=True)
+        if switch.returncode != 0:
+            _stderr(f"auto-PR switch -c {branch} failed: {switch.stderr.strip()}")
+            return None
+
+        # Re-write the sidecar at the same relative path on the new
+        # branch (the file may not exist on origin/main yet).
+        target = agent_logs_dir / rel_sidecar
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(sidecar_path.read_text())
+
+        add = _git("add", "--", rel_sidecar, capture=True)
+        if add.returncode != 0:
+            _stderr(f"auto-PR git add failed: {add.stderr.strip()}")
+            return None
+
+        commit_msg = (
+            f"meta: auto-commit sidecar for {session_id}\n\n"
+            "Stop hook auto-commit per vade-runtime#148 Part A.\n"
+            "Pure-add (single file) — eligible for the Night's Watch\n"
+            "§4 pure-add merge gate (MEMO-2026-04-26-04 §4)."
+        )
+        commit = _git(
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            commit_msg,
+            capture=True,
+        )
+        if commit.returncode != 0:
+            _stderr(f"auto-PR git commit failed: {commit.stderr.strip()}")
+            return None
+
+        push = _git("push", "-u", "origin", branch, capture=True)
+        if push.returncode != 0:
+            _stderr(f"auto-PR git push failed: {push.stderr.strip()}")
+            return None
+
+        body = (
+            "## Summary\n\n"
+            f"Auto-commit of `{rel_sidecar}` for session `{session_id}`.\n"
+            "Written by `vade-runtime/scripts/session-end-transcript-export.py`\n"
+            "per vade-runtime#148 Part A. The encrypted ciphertext is\n"
+            "already in R2; this PR makes the sidecar visible to the\n"
+            "transcript-analyzer pipeline.\n\n"
+            "## Test plan\n\n"
+            "- [x] Single-file pure-add (`status == \"added\"`).\n"
+            "- [ ] Auto-merges via the Night's Watch §4 pure-add gate.\n"
+        )
+        pr = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "create",
+                "-R",
+                "vade-app/vade-agent-logs",
+                "--base",
+                "main",
+                "--head",
+                branch,
+                "--title",
+                f"meta: auto-commit sidecar for {session_id}",
+                "--body",
+                body,
+            ],
+            check=False,
+            env=git_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if pr.returncode != 0:
+            _stderr(f"auto-PR gh pr create failed: {pr.stderr.strip()}")
+            return None
+        url = pr.stdout.strip().splitlines()[-1] if pr.stdout.strip() else ""
+        _stderr(f"auto-PR opened: {url}")
+        return url or None
+    finally:
+        # Restore the working tree to whatever was checked out before.
+        # Stop hooks fire from the active session; leaving the agent-logs
+        # repo on a half-detached branch surprises the operator.
+        if original_ref and original_ref != "HEAD":
+            _git("switch", original_ref)
+        else:
+            _git("switch", "--detach", head_proc.stdout.strip())
+
+
 def main() -> int:
     session_id = "unknown"
     sidecar_dir_for_error: Path | None = None
@@ -382,6 +565,15 @@ def main() -> int:
                 json.dump(sidecar, f, indent=2)
                 f.write("\n")
             _stderr(f"wrote sidecar: {sidecar_path}")
+
+        # Best-effort: open a single-file pure-add PR carrying just the
+        # sidecar. Per vade-runtime#148 Part A — closes the structural
+        # gap where 78% of sessions skipped committing meta.json.
+        # Failures here are logged via export-error, never raised.
+        try:
+            _open_meta_pr(agent_logs_dir, sidecar_path, session_id)
+        except BaseException as e:
+            _stderr(f"auto-PR raised unexpectedly: {e!r}; ignored")
 
         return 0
     except BaseException as e:
