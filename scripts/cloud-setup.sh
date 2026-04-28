@@ -30,6 +30,19 @@ log "Baseline: node=$(node --version 2>/dev/null || echo 'missing') npm=$(npm --
 
 ensure_dirs
 sync_claude_config "$RUNTIME_DIR/.claude"
+# vade-runtime#157 switched settings.json hook commands from
+# $HOME/.claude/vade-hooks/dispatch.sh to
+# $CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh. On local those paths
+# coincide because $CLAUDE_PROJECT_DIR resolves to $WORKSPACE_ROOT and the
+# user's personal $HOME is left untouched, but on cloud they diverge:
+# $HOME=/root while $CLAUDE_PROJECT_DIR=/home/user (=$WORKSPACE_ROOT) at
+# hook-fire time (see integrity-check B5). The sync_claude_config above
+# only installs the shim under $HOME/.claude, so without this extra
+# install the first SessionStart on a fresh snapshot would fail to
+# resolve any of the hook chain. Mirror the shim under the workspace
+# .claude as well — session-start-sync's full re-sync to
+# $WORKSPACE_ROOT/.claude takes over once the chain bootstraps.
+ensure_hooks_dispatch_shim "$RUNTIME_DIR/.claude" "$WORKSPACE_ROOT/.claude"
 # Aggregate per-repo primitives from data-owning repos into the
 # user-scope .claude/ via per-file symlinks. Per the data-ownership
 # rule (MEMO 2026-04-25-02), slash commands and skills live in the
