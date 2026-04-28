@@ -45,6 +45,20 @@ uv                  0.11.7    # Python package/tool installer. Used
                               # Bump when a new mem0-mcp-server release
                               # needs a newer uv, otherwise leave alone.
 
+# Consolidated binary vendor bundle. Single tarball published by
+# .github/workflows/publish-binary-vendor.yml on this repo, containing
+# op + gh + uv + mem0-mcp-server (with the uv-managed venv tree) at
+# /home/user/.local/. Fetched by cloud-setup.sh's
+# ensure_binaries_from_vendor in one curl with $GITHUB_MCP_PAT,
+# replacing the four per-CDN fetches above. Pin format: SHA256 of the
+# tarball as published; cloud-setup.sh sha256-verifies before untar.
+# Without a pin the fetch path is a no-op (verification fails closed),
+# leaving the per-binary direct-fetch fallback to handle install.
+# Empty until the first publish-binary-vendor workflow run lands a
+# bundle; bump on each Dockerfile/versions.lock change that
+# regenerates the bundle.
+binary_vendor_bundle  -         # SHA256 of binary-vendor.tar.gz; '-' = unset.
+
 # Globally installed via npm
 @anthropic-ai/claude-code 1.0.120  # Claude Code CLI. Pinned to the
                                    # minor available at container
