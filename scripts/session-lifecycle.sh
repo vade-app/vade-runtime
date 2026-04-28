@@ -131,6 +131,16 @@ if [ -f "$RUN_ID_FILE" ] && [ -s "$RUN_ID_FILE" ]; then
   RUN_ID="$(cat "$RUN_ID_FILE")"
 fi
 
+# Stop-hook context-injection contract: Claude Code only surfaces a
+# Stop hook's reminder text to the next turn when the hook returns
+# {"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"..."}}.
+# Plain stdout from a Stop hook lands in transcript-mode logs (Ctrl-R)
+# and is invisible to Claude — which is why this reminder silently
+# stopped reaching agents at some point in the harness lifetime,
+# despite the hook firing cleanly. Capture all reminder text into a
+# buffer, then emit it wrapped in the JSON envelope below.
+END_BUF="$(mktemp -t vade-session-end.XXXXXX 2>/dev/null || mktemp)"
+{
 echo "───────────────────────────────────────────────────────────────"
 echo "Session lifecycle — end of session (SOP-MEM-001 §5)"
 echo ""
@@ -226,3 +236,25 @@ fi
 
 echo "Full SOP: vade-coo-memory/coo/mem0_sop.md"
 echo "───────────────────────────────────────────────────────────────"
+} > "$END_BUF"
+
+# Emit captured reminder as Stop-hook structured output so Claude
+# actually sees it on the next turn. Falls back to plain stdout if
+# node is missing — strictly worse than the JSON path (Claude won't
+# see it), but the script must remain a graceful no-op when deps are
+# missing rather than aborting the Stop chain.
+if check_cmd node; then
+  node -e '
+    const fs = require("fs");
+    const text = fs.readFileSync(process.argv[1], "utf8");
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "Stop",
+        additionalContext: text
+      }
+    }) + "\n");
+  ' "$END_BUF"
+else
+  cat "$END_BUF"
+fi
+rm -f "$END_BUF"
