@@ -85,32 +85,19 @@ function humanAgo(t) {
   return Math.floor(s/86400) + "d ago";
 }
 
-console.log("───────────────────────────────────────────────────────────────");
-console.log("Boot check: vade-app org discussions");
-console.log("");
 if (recent.length === 0) {
-  console.log("No new discussions since " + cursor + ".");
+  console.log("Boot: vade-app discussions — no new since " + cursor + ".");
 } else {
-  console.log("New or updated since " + cursor + ":");
-  console.log("");
+  console.log("Boot: vade-app discussions, " + recent.length + " new/updated since " + cursor + ":");
   for (const n of recent) {
     const cat = (n.category || {}).name || "?";
     const author = (n.author || {}).login || "?";
-    console.log("  • [" + cat.toLowerCase() + "] " + n.title);
-    console.log("      " + n.url);
-    console.log("      updated " + humanAgo(Date.parse(n.updatedAt)) +
-                " · " + n.comments.totalCount + " comments · @" + author);
+    console.log("  #" + n.number + " [" + cat.toLowerCase() + "] " + n.title +
+                " (" + humanAgo(Date.parse(n.updatedAt)) + ", @" + author +
+                ", " + n.comments.totalCount + "c)");
   }
+  console.log("URLs: github.com/orgs/vade-app/discussions/<num>; norms: coo/agent-boot-discussions-check.md");
 }
-console.log("");
-console.log("Before you start work:");
-console.log("  • Skim titles. Read in full if it touches your current goals.");
-console.log("  • When in doubt, post in Q&A or Coordination. Asking is cheap.");
-console.log("  • One thread = one topic. Link issues and PRs liberally.");
-console.log("");
-console.log("All discussions: https://github.com/vade-app/vade-core/discussions");
-console.log("Posting norms:   vade-coo-memory/coo/agent-boot-discussions-check.md");
-console.log("───────────────────────────────────────────────────────────────");
 ' "$RESPONSE" "$CURSOR" && PARSE_OK=1
 
 if [ "$PARSE_OK" -eq 1 ]; then
