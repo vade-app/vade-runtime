@@ -1,0 +1,371 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["boto3>=1.34,<2"]
+# ///
+"""
+transcript-meta-backfill.py — vade-coo-memory#243.
+
+Stub-meta generator. The Stop hook (session-end-transcript-export.py)
+writes <id>.meta.json locally but doesn't commit it; until vade-runtime#148
+Part A lands and is reliable, sessions can leave R2 ciphertext orphaned
+from any sidecar in the agent-logs working tree. This script enumerates
+R2 directly, finds session_ids without a sibling meta.json in
+vade-agent-logs/transcripts/<date>/, and drops a stub <id>.meta.json
+that the transcript-analyzer agent accepts.
+
+Pipeline per session_id:
+  1. boto3 list_objects_v2 against the configured R2 prefix.
+  2. For each ciphertext key transcripts/YYYY/MM/DD/<id>.jsonl.gz.age:
+     - If the agent-logs working tree already holds a real meta.json
+       at the same date-path, skip.
+     - If a stub meta.json already exists (carrying _stub: true), skip.
+     - Otherwise download the ciphertext to a temp file, compute
+       sha256, write a stub meta.json with the fields the analyzer
+       reads.
+
+The stub is intentionally shallow — the analyzer doesn't need
+events_processed or bytes_post_redaction; it computes those itself
+when it parses the redacted jsonl. The fields the analyzer DOES rely
+on are r2.bucket / r2.key / r2.endpoint / r2.uploaded /
+ciphertext_sha256 / age_recipient_pubkey, all populated here.
+
+CLI:
+  --date YYYY/MM/DD              process one R2 date prefix
+  --session-id <id>              process exactly one session (locates
+                                 R2 key by walking the prefix)
+  --dry-run                      report what would be written without
+                                 writing
+  --agent-logs-dir <path>        override resolution (else ENV
+                                 VADE_AGENT_LOGS_DIR or default candidates)
+
+Env (sourced from ~/.vade/coo-env, mirroring the export hook):
+  R2_TRANSCRIPTS_ACCESS_KEY_ID / R2_TRANSCRIPTS_SECRET_ACCESS_KEY
+Read at run time via `op read`:
+  op://COO/r2-transcripts/endpoint
+  op://COO/r2-transcripts/bucket
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+PARSER_VERSION = 1
+SCHEMA_VERSION = 1
+SCRIPT_DIR = Path(__file__).resolve().parent
+RUNTIME_ROOT = SCRIPT_DIR.parent.parent
+RECIPIENT_FILE = RUNTIME_ROOT / "scripts" / "lib" / "transcripts-recipient.age"
+
+R2_KEY_PATTERN = re.compile(
+    r"^transcripts/(?P<date>\d{4}/\d{2}/\d{2})/(?P<sid>[A-Za-z0-9_\-]+)\.jsonl\.gz\.age$"
+)
+
+
+def _stderr(msg: str) -> None:
+    sys.stderr.write(f"[transcript-meta-backfill] {msg}\n")
+
+
+def _resolve_agent_logs_dir(explicit: str | None) -> Path:
+    if explicit:
+        p = Path(explicit).expanduser()
+        if p.is_dir():
+            return p
+        raise FileNotFoundError(f"--agent-logs-dir={p} does not exist")
+    env = os.environ.get("VADE_AGENT_LOGS_DIR", "").strip()
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+        raise FileNotFoundError(f"VADE_AGENT_LOGS_DIR={p} does not exist")
+    candidates = [
+        Path.home() / "GitHub" / "vade-app" / "vade-agent-logs",
+        Path("/home/user/vade-agent-logs"),
+        RUNTIME_ROOT.parent / "vade-agent-logs",
+    ]
+    for c in candidates:
+        if c.is_dir():
+            return c
+    raise FileNotFoundError(
+        "vade-agent-logs working tree not found; tried "
+        + ", ".join(str(c) for c in candidates)
+    )
+
+
+def _op_read(ref: str) -> str:
+    if not shutil.which("op"):
+        return ""
+    try:
+        out = subprocess.run(
+            ["op", "read", ref],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return out.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _r2_creds() -> tuple[str, str, str, str]:
+    access_key = os.environ.get("R2_TRANSCRIPTS_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_TRANSCRIPTS_SECRET_ACCESS_KEY", "").strip()
+    if not access_key or not secret_key:
+        raise RuntimeError(
+            "R2_TRANSCRIPTS_ACCESS_KEY_ID / R2_TRANSCRIPTS_SECRET_ACCESS_KEY "
+            "missing — source ~/.vade/coo-env first"
+        )
+    endpoint = _op_read("op://COO/r2-transcripts/endpoint")
+    bucket = _op_read("op://COO/r2-transcripts/bucket")
+    if not endpoint or not bucket:
+        raise RuntimeError(
+            "op://COO/r2-transcripts/{endpoint,bucket} unreadable — "
+            "verify OP_SERVICE_ACCOUNT_TOKEN and 1Password provisioning"
+        )
+    return access_key, secret_key, endpoint, bucket
+
+
+def _r2_client(access_key: str, secret_key: str, endpoint: str):
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name="auto",
+        config=Config(
+            signature_version="s3v4",
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
+    )
+
+
+def _list_r2_keys(s3, bucket: str, prefix: str) -> list[dict]:
+    """Return [{key, size, last_modified}, ...] under prefix."""
+    out: list[dict] = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            out.append(
+                {
+                    "key": obj["Key"],
+                    "size": obj["Size"],
+                    "last_modified": obj["LastModified"],
+                }
+            )
+    return out
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(64 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _read_recipient_pubkey() -> str:
+    """Mirror of session-end-transcript-export._read_recipient_pubkey."""
+    try:
+        for line in reversed(RECIPIENT_FILE.read_text().splitlines()):
+            s = line.strip()
+            if s and not s.startswith("#"):
+                return s
+    except OSError:
+        pass
+    return ""
+
+
+def _meta_already_present(sidecar_dir: Path, session_id: str) -> tuple[bool, str]:
+    """Returns (skip, reason). Skip when a real or stub meta is already on disk."""
+    meta_path = sidecar_dir / f"{session_id}.meta.json"
+    if not meta_path.exists():
+        return False, ""
+    try:
+        existing = json.loads(meta_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return True, "existing meta.json unparseable; refusing to overwrite"
+    if existing.get("_stub") is True:
+        return True, "stub already present"
+    return True, "real meta.json already present"
+
+
+def _r2_iter(date_filter: str | None, session_id_filter: str | None):
+    """Yield (key, size, last_modified, date_path, sid) tuples that match
+    the requested scope. `date_filter` is YYYY/MM/DD; `session_id_filter`
+    is the bare session id (we walk the bucket and grep by sid)."""
+    access_key, secret_key, endpoint, bucket = _r2_creds()
+    s3 = _r2_client(access_key, secret_key, endpoint)
+
+    if date_filter:
+        prefix = f"transcripts/{date_filter}/"
+    else:
+        # Single-session search: walk the whole transcripts/ tree.
+        # Bucket lifecycle keeps this small; if it grows we can add a
+        # --window-days bound.
+        prefix = "transcripts/"
+
+    for entry in _list_r2_keys(s3, bucket, prefix):
+        m = R2_KEY_PATTERN.match(entry["key"])
+        if not m:
+            continue
+        date_path = m.group("date")
+        sid = m.group("sid")
+        if session_id_filter and sid != session_id_filter:
+            continue
+        yield (entry, date_path, sid, bucket, endpoint)
+
+
+def _write_stub(
+    sidecar_dir: Path,
+    session_id: str,
+    bucket: str,
+    endpoint: str,
+    r2_key: str,
+    ciphertext_size: int,
+    ciphertext_sha256: str,
+    last_modified: datetime.datetime,
+) -> Path:
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    sidecar_path = sidecar_dir / f"{session_id}.meta.json"
+    stub = {
+        "_stub": True,
+        "schema_version": SCHEMA_VERSION,
+        "parser_version": PARSER_VERSION,
+        "session_id": session_id,
+        "exported_at": last_modified.astimezone(datetime.timezone.utc).isoformat(),
+        "source_jsonl": None,
+        "events_processed": None,
+        "events_with_unparseable_json": None,
+        "bytes_pre_redaction": None,
+        "bytes_post_redaction": None,
+        "bytes_post_gzip": None,
+        "bytes_ciphertext": ciphertext_size,
+        "ciphertext_sha256": ciphertext_sha256,
+        "redaction_hits": None,
+        "r2": {
+            "bucket": bucket,
+            "key": r2_key,
+            "endpoint": endpoint,
+            "uploaded": True,
+        },
+        "age_recipient_file": str(RECIPIENT_FILE.relative_to(RUNTIME_ROOT))
+        if RECIPIENT_FILE.exists()
+        else None,
+        "age_recipient_pubkey": _read_recipient_pubkey(),
+        "stub_generator": "vade-runtime/scripts/lib/transcript-meta-backfill.py",
+        "stub_generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    with open(sidecar_path, "w") as f:
+        json.dump(stub, f, indent=2)
+        f.write("\n")
+    return sidecar_path
+
+
+def _backfill_one(
+    entry: dict,
+    date_path: str,
+    session_id: str,
+    bucket: str,
+    endpoint: str,
+    sidecar_dir: Path,
+    s3,
+    dry_run: bool,
+) -> str:
+    """Returns a one-line status string for the report."""
+    skip, reason = _meta_already_present(sidecar_dir, session_id)
+    if skip:
+        return f"SKIP {date_path}/{session_id} ({reason})"
+
+    if dry_run:
+        return f"DRY  {date_path}/{session_id} would write stub ({entry['size']} bytes)"
+
+    with tempfile.TemporaryDirectory(prefix=f"meta-backfill-{session_id}-") as tmp:
+        ciphertext = Path(tmp) / f"{session_id}.jsonl.gz.age"
+        s3.download_file(bucket, entry["key"], str(ciphertext))
+        sha = _sha256(ciphertext)
+        size = ciphertext.stat().st_size
+
+    sidecar = _write_stub(
+        sidecar_dir,
+        session_id,
+        bucket,
+        endpoint,
+        entry["key"],
+        size,
+        sha,
+        entry["last_modified"],
+    )
+    return f"WROTE {date_path}/{session_id} ({sidecar})"
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="R2-first stub meta.json generator (vade-coo-memory#243).",
+    )
+    parser.add_argument(
+        "--date",
+        help="R2 date prefix to process (YYYY/MM/DD).",
+    )
+    parser.add_argument(
+        "--session-id",
+        help="Process exactly one session_id (search the bucket for its key).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report would-write actions without writing.",
+    )
+    parser.add_argument(
+        "--agent-logs-dir",
+        help="Override vade-agent-logs working tree resolution.",
+    )
+    args = parser.parse_args(argv)
+
+    if not args.date and not args.session_id:
+        parser.error("either --date or --session-id is required")
+
+    agent_logs_dir = _resolve_agent_logs_dir(args.agent_logs_dir)
+    transcripts_root = agent_logs_dir / "transcripts"
+
+    access_key, secret_key, endpoint, bucket = _r2_creds()
+    s3 = _r2_client(access_key, secret_key, endpoint)
+
+    seen = 0
+    written = 0
+    skipped = 0
+    for entry, date_path, sid, _, _ in _r2_iter(args.date, args.session_id):
+        seen += 1
+        sidecar_dir = transcripts_root / date_path
+        line = _backfill_one(
+            entry, date_path, sid, bucket, endpoint, sidecar_dir, s3, args.dry_run
+        )
+        if line.startswith("WROTE"):
+            written += 1
+        elif line.startswith("DRY"):
+            written += 1  # would-have-written
+        else:
+            skipped += 1
+        print(line)
+
+    print(
+        f"\nsummary: seen={seen} written={written} skipped={skipped} "
+        f"dry_run={args.dry_run}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
