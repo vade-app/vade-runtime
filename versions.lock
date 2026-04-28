@@ -57,7 +57,7 @@ uv                  0.11.7    # Python package/tool installer. Used
 # Empty until the first publish-binary-vendor workflow run lands a
 # bundle; bump on each Dockerfile/versions.lock change that
 # regenerates the bundle.
-binary_vendor_bundle  -         # SHA256 of binary-vendor.tar.gz; '-' = unset.
+binary_vendor_bundle  bb9cf2c35a86f7d558f6f3dd3a8da3e0b5d7dd30880a33d80e4320c28036f0c3  # SHA256 of binary-vendor.tar.gz published as binary-vendor-3c08804 from merge of #128.
 
 # Globally installed via npm
 @anthropic-ai/claude-code 1.0.120  # Claude Code CLI. Pinned to the
