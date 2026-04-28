@@ -214,7 +214,8 @@
       "Bash(node *)",
       "Bash(flyctl logs *)",
       "mcp__vade-canvas__getCanvasState",
-      "Bash(xargs -0 cat)"
+      "Bash(xargs -0 cat)",
+      "mcp__claude_ai_Mem0__add_memory"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
