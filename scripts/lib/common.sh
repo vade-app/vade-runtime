@@ -230,8 +230,12 @@ retry() {
 # them from Claude Code's own env (settings.json is read only at
 # Claude Code startup, so the first session after provisioning has
 # a gap that this closes).
+#
+# Caller opt-out: export VADE_NO_COO_ENV_AUTOSOURCE=1 to suppress.
+# Tests that supply their own GITHUB_MCP_PAT / etc. otherwise have
+# the host's real values silently overwrite the fake ones (see #126).
 # shellcheck source=/dev/null
-[ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
+[ -z "${VADE_NO_COO_ENV_AUTOSOURCE:-}" ] && [ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
 
 # Block until coo-bootstrap.sh reaches a terminal state (OK/FAIL/SKIP)
 # in this session, then re-source coo-env so vars written during the
@@ -282,7 +286,7 @@ wait_for_coo_bootstrap() {
   done
   VADE_BOOTSTRAP_WAIT_ELAPSED="$elapsed"
   # shellcheck source=/dev/null
-  [ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
+  [ -z "${VADE_NO_COO_ENV_AUTOSOURCE:-}" ] && [ -f "${HOME}/.vade/coo-env" ] && . "${HOME}/.vade/coo-env"
   return 0
 }
 
