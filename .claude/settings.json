@@ -255,7 +255,9 @@
       "Read(//Users/venpopov/GitHub/vade-app/**)",
       "mcp__github-coo__get_me",
       "Bash(mkdir -p /root/.claude/plans)",
-      "Read(//root/.claude/plans/**)"
+      "Read(//root/.claude/plans/**)",
+      "Bash(echo '{\"name\":\"feasibility-canvas-2agent\",\"members\":[]}')",
+      "Bash(mkdir -p /root/.claude/teams/feasibility-canvas-2agent /root/.claude/tasks/feasibility-canvas-2agent)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
