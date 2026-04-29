@@ -236,7 +236,9 @@
       "Bash(node -e 'JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/venpopov/GitHub/vade-app/vade-runtime/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"OK: settings.json parses\"\\)')",
       "Read(//Users/venpopov/.claude/**)",
       "Read(//Users/venpopov/GitHub/vade-app/**)",
-      "mcp__github-coo__get_me"
+      "mcp__github-coo__get_me",
+      "Bash(mkdir -p /root/.claude/plans)",
+      "Read(//root/.claude/plans/**)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
