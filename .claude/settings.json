@@ -238,7 +238,8 @@
       "Read(//Users/venpopov/GitHub/vade-app/**)",
       "mcp__github-coo__get_me",
       "mcp__claude_ai_Mem0__get_memories",
-      "mcp__claude_ai_Mem0__search_memories"
+      "mcp__claude_ai_Mem0__search_memories",
+      "Bash(flyctl secrets *)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
