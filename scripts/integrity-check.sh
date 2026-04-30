@@ -236,6 +236,35 @@ else
   _add D5 false "gitconfig user.email=$GIT_EMAIL (expected coo@vade-app.dev)"
 fi
 
+# D5b — local-scope .git/config divergence surface
+# D5 covers the global ~/.gitconfig (vade-coo-memory#287, fixed by
+# vade-runtime#184). Per-repo .git/config can override it silently:
+# a clone performed during a poisoned-bootstrap session may stamp
+# local user.email at clone time, surviving subsequent global-scope
+# corrections (vade-coo-memory#338). This probe scans repos under
+# WORKSPACE_ROOT and surfaces local-scope user.email values that
+# diverge from coo@vade-app.dev.
+#
+# Surface-only — does NOT rewrite. Some repos may carry intentional
+# per-repo identities (forks, vendored externals); auto-rewrite would
+# clobber them. When D5b fires, the operator-side fix is:
+#   git -C <path> config --local --unset user.email
+#   git -C <path> config --local --unset user.name
+D5b_bad=()
+for _repo_dir in "$WORKSPACE_ROOT"/*/; do
+  _repo_dir="${_repo_dir%/}"
+  [ -d "$_repo_dir/.git" ] || continue
+  _local_email="$(git -C "$_repo_dir" config --local user.email 2>/dev/null || true)"
+  if [ -n "$_local_email" ] && [ "$_local_email" != "coo@vade-app.dev" ]; then
+    D5b_bad+=("$(basename "$_repo_dir"):$_local_email")
+  fi
+done
+if [ "${#D5b_bad[@]}" -eq 0 ]; then
+  _add D5b true "no local-scope user.email overrides diverge from coo@vade-app.dev"
+else
+  _add D5b false "local-scope user.email override(s): ${D5b_bad[*]}"
+fi
+
 if [ -f "$HOME/.ssh/vade-coo-auth" ] && [ -f "$HOME/.ssh/vade-coo-sign" ]; then
   # Keys present; now check the signing posture is internally consistent.
   # Per MEMO 2026-04-23-04, cloud sessions (harness sets gpg.ssh.program
