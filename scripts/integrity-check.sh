@@ -537,8 +537,13 @@ fi
 
 # ── F3 — Essay companion invariant ───────────────────────────
 # Every coo/foundations/YYYY-MM-DD_*.md dated since F_CUTOFF (excluding
-# _transcript and _agent-reports files) must have a matching
-# YYYY-MM-DD_transcript.md companion in the same directory.
+# _transcript, _companion, and _agent-reports files) must have a matching
+# companion: either YYYY-MM-DD_transcript.md (single-session form) or any
+# YYYY-MM-DD_*_companion.md / YYYY-MM-DD_*-companion.md (multi-instance /
+# protocol-substrate form, e.g. coo/foundations/2026-04-28_letter-to-
+# anthropic-companion.md). Either satisfies the obligation; the companion
+# variant carries the same record-of-reasoning role for artifacts that
+# weren't authored in a single session.
 if [ -d "$F_REPO/coo/foundations" ]; then
   f3_total=0
   f3_bad=()
@@ -548,10 +553,20 @@ if [ -d "$F_REPO/coo/foundations" ]; then
     # String comparison on ISO dates is safe; bash [[ ]] supports it.
     [ "$essay_date" \< "$F_CUTOFF" ] && continue
     case "$essay" in
-      *_transcript.md|*_agent-reports*) continue ;;
+      *_transcript.md|*_companion.md|*-companion.md|*_agent-reports*) continue ;;
     esac
     f3_total=$((f3_total + 1))
-    if [ ! -f "$F_REPO/coo/foundations/${essay_date}_transcript.md" ]; then
+    has_companion=0
+    if [ -f "$F_REPO/coo/foundations/${essay_date}_transcript.md" ]; then
+      has_companion=1
+    else
+      # Accept any same-date *_companion.md or *-companion.md as transcript-equivalent.
+      for c in "$F_REPO/coo/foundations/${essay_date}"_*_companion.md \
+               "$F_REPO/coo/foundations/${essay_date}"_*-companion.md; do
+        [ -f "$c" ] && { has_companion=1; break; }
+      done
+    fi
+    if [ "$has_companion" -eq 0 ]; then
       f3_bad+=("$essay")
     fi
   done < <(ls -1 "$F_REPO/coo/foundations/" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_')
