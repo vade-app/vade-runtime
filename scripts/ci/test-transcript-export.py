@@ -142,14 +142,34 @@ def main() -> int:
         if result.returncode != 0:
             fail(f"hook returned rc={result.returncode}; stderr:\n{result.stderr}")
 
+        # The wrapper detaches the Python child via `setsid -f` so it can
+        # survive harness teardown under CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+        # (vade-runtime#181 / #182). The sidecar is written asynchronously
+        # after the wrapper returns. Poll for up to 60s; the synthetic jsonl
+        # is small (~4 events) so under normal conditions the export
+        # completes in 1–2s.
         date_path = f"{today.year:04d}/{today.month:02d}/{today.day:02d}"
         sidecar = agent_logs / "transcripts" / date_path / f"{sid}.meta.json"
         err = agent_logs / "transcripts" / date_path / f"{sid}.export-error.txt"
+        import time
+        deadline = time.time() + 60.0
+        while time.time() < deadline:
+            if err.is_file():
+                fail(f"unexpected export-error.txt:\n{err.read_text()[:1000]}")
+            if sidecar.is_file():
+                break
+            time.sleep(0.25)
         if err.is_file():
             fail(f"unexpected export-error.txt:\n{err.read_text()[:1000]}")
         if not sidecar.is_file():
             tree = list((agent_logs / "transcripts").rglob("*"))
-            fail(f"sidecar not at {sidecar}; tree={tree}; stderr:\n{result.stderr}")
+            log_dir = fake_home / ".vade" / "transcript-export-logs"
+            log_dump = ""
+            if log_dir.is_dir():
+                logs = sorted(log_dir.glob("*.log"))
+                if logs:
+                    log_dump = "\n--- detached child log ---\n" + logs[-1].read_text()[-2000:]
+            fail(f"sidecar not at {sidecar} after 60s wait; tree={tree}; stderr:\n{result.stderr}{log_dump}")
 
         meta = json.loads(sidecar.read_text())
 
