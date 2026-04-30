@@ -486,7 +486,7 @@ if [ -d "$F_REPO/.git" ] && check_cmd git; then
     [ -n "$touched" ] || continue
     f1_total=$((f1_total + 1))
     body=$(git -C "$F_REPO" log -1 --format='%B' "$sha" 2>/dev/null || echo '')
-    if ! printf '%s' "$body" | grep -qE 'MEMO [0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]+|#[0-9]+'; then
+    if ! printf '%s' "$body" | grep -qE 'MEMO[- ][0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-z]+|#[0-9]+'; then
       f1_bad+=("${sha:0:10}")
     fi
   done < <(git -C "$F_REPO" log --since="$F_CUTOFF_GIT" --format='%H' 2>/dev/null)
