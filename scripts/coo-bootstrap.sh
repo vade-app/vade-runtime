@@ -35,6 +35,18 @@ _on_exit() {
 }
 trap _on_exit EXIT
 
+# Ensure baseline COO identity in gitconfig BEFORE any early-exit gate.
+# Signing keys and full-fidelity gitconfig still gated behind
+# write_coo_gitconfig (which needs OP_SERVICE_ACCOUNT_TOKEN). This minimal
+# write only sets attribution name/email so commits survive no-op-token
+# boots without falling back to the container default ("Test <test@test.com>").
+# Closes vade-coo-memory#287.
+COO_BOOTSTRAP_STEP="ensure_coo_identity_minimal"
+GC="${VADE_COO_GITCONFIG:-${HOME}/.gitconfig}"
+mkdir -p "$(dirname "$GC")"
+git config --file "$GC" user.name "COO"
+git config --file "$GC" user.email "coo@vade-app.dev"
+
 if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
   log "coo-bootstrap: OP_SERVICE_ACCOUNT_TOKEN unset; skipping COO identity setup."
   COO_BOOTSTRAP_STEP="skip-no-op-token"
