@@ -256,7 +256,15 @@
       "Read(//Users/venpopov/GitHub/vade-app/**)",
       "mcp__github-coo__get_me",
       "Bash(mkdir -p /root/.claude/plans)",
-      "Read(//root/.claude/plans/**)"
+      "Read(//root/.claude/plans/**)",
+      "Edit(/home/user/.claude/plans/**)",
+      "Edit(/home/user/vade-coo-memory/.claude/skills/**)",
+      "Edit(/home/user/vade-coo-memory/coo/personas/**)",
+      "Edit(/root/.claude/plans/**)",
+      "Write(/home/user/.claude/plans/**)",
+      "Write(/home/user/vade-coo-memory/.claude/skills/**)",
+      "Write(/home/user/vade-coo-memory/coo/personas/**)",
+      "Write(/root/.claude/plans/**)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
