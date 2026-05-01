@@ -1238,7 +1238,10 @@ merge_coo_settings_env() {
     "${GITHUB_MCP_PAT:-}" \
     "${AGENTMAIL_API_KEY:-}" \
     "${MEM0_API_KEY:-}" \
-    "${VADE_AUTH_TOKEN:-}"
+    "${VADE_AUTH_TOKEN:-}" \
+    "${R2_TRANSCRIPTS_ACCESS_KEY_ID:-}" \
+    "${R2_TRANSCRIPTS_SECRET_ACCESS_KEY:-}" \
+    "${TRANSCRIPTS_AGE_IDENTITY:-}"
 }
 
 # Persist non-secret bootstrap-derived path state into ~/.claude/settings.json
@@ -1268,6 +1271,7 @@ merge_coo_settings_paths() {
 # exists, so this is a no-op outside the Claude cloud image.
 _write_claude_settings_env() {
   local pat="$1" agentmail="$2" mem0="$3" vade_auth_token="${4:-}"
+  local r2_access_key_id="${5:-}" r2_secret_access_key="${6:-}" age_identity="${7:-}"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json env merge"
     return 0
@@ -1284,6 +1288,9 @@ _write_claude_settings_env() {
 
   GITHUB_MCP_PAT="$pat" AGENTMAIL_API_KEY="$agentmail" MEM0_API_KEY="$mem0" \
   VADE_AUTH_TOKEN="$vade_auth_token" \
+  R2_TRANSCRIPTS_ACCESS_KEY_ID="$r2_access_key_id" \
+  R2_TRANSCRIPTS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
+  TRANSCRIPTS_AGE_IDENTITY="$age_identity" \
   NODE_PATH="$node_path" PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" node -e '
     const fs = require("fs");
     const path = process.argv[1];
@@ -1306,6 +1313,15 @@ _write_claude_settings_env() {
     }
     if (process.env.VADE_AUTH_TOKEN) {
       merged.VADE_AUTH_TOKEN = process.env.VADE_AUTH_TOKEN;
+    }
+    if (process.env.R2_TRANSCRIPTS_ACCESS_KEY_ID) {
+      merged.R2_TRANSCRIPTS_ACCESS_KEY_ID = process.env.R2_TRANSCRIPTS_ACCESS_KEY_ID;
+    }
+    if (process.env.R2_TRANSCRIPTS_SECRET_ACCESS_KEY) {
+      merged.R2_TRANSCRIPTS_SECRET_ACCESS_KEY = process.env.R2_TRANSCRIPTS_SECRET_ACCESS_KEY;
+    }
+    if (process.env.TRANSCRIPTS_AGE_IDENTITY) {
+      merged.TRANSCRIPTS_AGE_IDENTITY = process.env.TRANSCRIPTS_AGE_IDENTITY;
     }
     if (process.env.NODE_PATH) {
       merged.NODE_PATH = process.env.NODE_PATH;

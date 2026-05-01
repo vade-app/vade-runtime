@@ -83,6 +83,8 @@ _settings_env_complete() {
     catch { process.exit(1); }
     const env = cfg.env || {};
     const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY", "MEM0_API_KEY",
+                      "R2_TRANSCRIPTS_ACCESS_KEY_ID", "R2_TRANSCRIPTS_SECRET_ACCESS_KEY",
+                      "TRANSCRIPTS_AGE_IDENTITY",
                       "VADE_CLOUD_STATE_DIR", "PATH"];
     for (const k of required) { if (!env[k]) process.exit(1); }
     // PATH content sanity: Claude Code does not shell-expand env values,
