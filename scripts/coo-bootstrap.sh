@@ -82,7 +82,13 @@ _settings_env_complete() {
     try { cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) || {}; }
     catch { process.exit(1); }
     const env = cfg.env || {};
+    // Bootstrap-blocking required-list: every key here, when missing, force-re-runs
+    // the full bootstrap. VADE_AUTH_TOKEN is intentionally NOT in this list — it
+    // is passed through merge_coo_settings_env (best-effort) but feature-gated and
+    // may be empty in some environments without warranting a full re-run.
     const required = ["GITHUB_MCP_PAT", "GITHUB_TOKEN", "AGENTMAIL_API_KEY", "MEM0_API_KEY",
+                      "R2_TRANSCRIPTS_ACCESS_KEY_ID", "R2_TRANSCRIPTS_SECRET_ACCESS_KEY",
+                      "TRANSCRIPTS_AGE_IDENTITY",
                       "VADE_CLOUD_STATE_DIR", "PATH"];
     for (const k of required) { if (!env[k]) process.exit(1); }
     // PATH content sanity: Claude Code does not shell-expand env values,
