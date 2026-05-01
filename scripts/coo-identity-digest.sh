@@ -86,11 +86,10 @@ if [ -f "$MEMO_INDEX" ] && check_cmd jq; then
   # newest-first by id. Print oldest-of-top-10 first so the most-recent
   # memo lands closest to the user prompt.
   #
-  # Prints only id + status + title. summary_one_line is currently set
-  # identical to title by _lib/memo-index.sh, so omitting it eliminates
-  # ~50% per-line duplication; full schema is documented in
-  # coo/operations/memo-access.md. The whole index is too large to Read
-  # (>25K tokens) — agents needing other slices should jq the file.
+  # Prints only id + status + title. Full schema is documented in
+  # coo/operations/memo-access.md. The index uses ~19K tokens at ~95
+  # memos post-vade-coo-memory#351 — agents needing other slices
+  # should jq the file rather than Read it.
   if digest_out=$(jq -r '
     sort_by(.id) | reverse |
     .[0:10] | reverse |
