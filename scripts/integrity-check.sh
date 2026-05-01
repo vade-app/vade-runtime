@@ -24,6 +24,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
+# Belt-and-suspenders: common.sh seeds VADE_CLOUD_STATE_DIR with a cloud-host default;
+# session-start-sync.sh now merges it into settings.json so hooks inherit the correct path,
+# but if that merge hasn't run yet (e.g., manual invocation before bootstrap), redirect
+# when the cloud path is absent and the local path exists. vade-runtime#171.
+if [ ! -d "$VADE_CLOUD_STATE_DIR" ] && [ -d "$HOME/.vade/local-state" ]; then
+  VADE_CLOUD_STATE_DIR="$HOME/.vade/local-state"
+fi
+
 OUT_FILE="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Workspace root: parent of vade-runtime. /home/user on cloud,
@@ -217,11 +225,11 @@ if check_cmd node && [ -f "$HOME/.claude/settings.json" ]; then
     let c = {};
     try { c = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) || {}; } catch { process.exit(0); }
     const env = c.env || {};
-    const req = ["GITHUB_MCP_PAT","GITHUB_TOKEN","AGENTMAIL_API_KEY","MEM0_API_KEY"];
+    const req = ["GITHUB_MCP_PAT","GITHUB_TOKEN","AGENTMAIL_API_KEY","MEM0_API_KEY","VADE_CLOUD_STATE_DIR"];
     process.stdout.write(req.filter(k => !env[k]).join(","));
   ' "$HOME/.claude/settings.json" 2>/dev/null)"
   if [ -z "$D4_missing" ]; then
-    _add D4 true "settings.json env has GITHUB_MCP_PAT, GITHUB_TOKEN, AGENTMAIL_API_KEY, MEM0_API_KEY"
+    _add D4 true "settings.json env has GITHUB_MCP_PAT, GITHUB_TOKEN, AGENTMAIL_API_KEY, MEM0_API_KEY, VADE_CLOUD_STATE_DIR"
   else
     _add D4 false "settings.json env missing: $D4_missing"
   fi
