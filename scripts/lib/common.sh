@@ -1380,8 +1380,18 @@ _write_claude_settings_paths() {
     *":${bindir}") live_path="${live_path%:${bindir}}" ;;
   esac
 
+  # UV_CACHE_DIR redirects uv's script-environment cache (used by
+  # `uv run --script` shebangs in transcript-meta-backfill.py and
+  # session-end-transcript-export.py) to a snapshot-persistent path
+  # under /home/user/. Default uv cache lands at /root/.cache/uv/
+  # which is ephemeral on cloud-sandbox resume — every nightly resume
+  # would otherwise pay a fresh boto3 resolve + install + egress hop.
+  # Set here in the paths block (not the env-secrets block) because
+  # this is a non-secret path-state value with no PAT-validation gate.
+  local uv_cache_dir="/home/user/.cache/uv"
+
   VADE_CLOUD_STATE_DIR="$cloud_state_dir" VADE_BINDIR="$bindir" \
-  VADE_LIVE_PATH="$live_path" node -e '
+  VADE_LIVE_PATH="$live_path" UV_CACHE_DIR="$uv_cache_dir" node -e '
     const fs = require("fs");
     const path = process.argv[1];
     let cfg = {};
@@ -1402,6 +1412,9 @@ _write_claude_settings_paths() {
       const bindir = process.env.VADE_BINDIR;
       const live = process.env.VADE_LIVE_PATH;
       merged.PATH = live ? bindir + ":" + live : bindir;
+    }
+    if (process.env.UV_CACHE_DIR) {
+      merged.UV_CACHE_DIR = process.env.UV_CACHE_DIR;
     }
     cfg.env = merged;
     fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
