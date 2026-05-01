@@ -39,6 +39,12 @@ CLI:
   --agent-logs-dir <path>        override resolution (else ENV
                                  VADE_AGENT_LOGS_DIR or default candidates)
 
+--date and --session-id are NOT mutually exclusive. At-least-one is required;
+supplying both narrows the R2 prefix (--date) AND filters during iteration
+(--session-id), which is cheaper than walking the whole bucket for a known
+date+id pair. The vade-runtime#150 PR body mis-stated this as mutually-
+exclusive (refs vade-runtime#151).
+
 Env (sourced from ~/.vade/coo-env, mirroring the export hook):
   R2_TRANSCRIPTS_ACCESS_KEY_ID / R2_TRANSCRIPTS_SECRET_ACCESS_KEY
 Read at run time via `op read`:
@@ -321,7 +327,8 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--session-id",
-        help="Process exactly one session_id (search the bucket for its key).",
+        help="Process exactly one session_id (search the bucket for its key); "
+        "may combine with --date to narrow the search to that date prefix.",
     )
     parser.add_argument(
         "--dry-run",
