@@ -1241,7 +1241,9 @@ merge_coo_settings_env() {
     "${VADE_AUTH_TOKEN:-}" \
     "${R2_TRANSCRIPTS_ACCESS_KEY_ID:-}" \
     "${R2_TRANSCRIPTS_SECRET_ACCESS_KEY:-}" \
-    "${TRANSCRIPTS_AGE_IDENTITY:-}"
+    "${TRANSCRIPTS_AGE_IDENTITY:-}" \
+    "${VADE_BEARER_TOKEN:-}" \
+    "${VADE_MCP_URL:-}"
 }
 
 # Persist non-secret bootstrap-derived path state into ~/.claude/settings.json
@@ -1282,6 +1284,7 @@ merge_coo_settings_state_dir() {
 _write_claude_settings_env() {
   local pat="$1" agentmail="$2" mem0="$3" vade_auth_token="${4:-}"
   local r2_access_key_id="${5:-}" r2_secret_access_key="${6:-}" age_identity="${7:-}"
+  local vade_bearer_token="${8:-}" vade_mcp_url="${9:-}"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json env merge"
     return 0
@@ -1301,6 +1304,8 @@ _write_claude_settings_env() {
   R2_TRANSCRIPTS_ACCESS_KEY_ID="$r2_access_key_id" \
   R2_TRANSCRIPTS_SECRET_ACCESS_KEY="$r2_secret_access_key" \
   TRANSCRIPTS_AGE_IDENTITY="$age_identity" \
+  VADE_BEARER_TOKEN="$vade_bearer_token" \
+  VADE_MCP_URL="$vade_mcp_url" \
   NODE_PATH="$node_path" PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" node -e '
     const fs = require("fs");
     const path = process.argv[1];
@@ -1332,6 +1337,12 @@ _write_claude_settings_env() {
     }
     if (process.env.TRANSCRIPTS_AGE_IDENTITY) {
       merged.TRANSCRIPTS_AGE_IDENTITY = process.env.TRANSCRIPTS_AGE_IDENTITY;
+    }
+    if (process.env.VADE_BEARER_TOKEN) {
+      merged.VADE_BEARER_TOKEN = process.env.VADE_BEARER_TOKEN;
+    }
+    if (process.env.VADE_MCP_URL) {
+      merged.VADE_MCP_URL = process.env.VADE_MCP_URL;
     }
     if (process.env.NODE_PATH) {
       merged.NODE_PATH = process.env.NODE_PATH;
