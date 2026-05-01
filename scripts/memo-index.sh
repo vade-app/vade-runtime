@@ -2,7 +2,7 @@
 # memo-index (thin wrapper).
 #
 # The real memo-index logic lives at
-# vade-coo-memory/.claude/commands/_lib/memo-index.sh — it travels with the
+# vade-coo-memory/.claude/_lib/memo-index.sh — it travels with the
 # data it operates on (per the data-ownership rule from the 2026-04-25
 # emancipation refactor; see MEMO 2026-04-25-02).
 #
@@ -32,7 +32,7 @@ CANDIDATES=(
 COO=""
 for c in "${CANDIDATES[@]}"; do
   [ -z "$c" ] && continue
-  if [ -f "$c/.claude/commands/_lib/memo-index.sh" ]; then
+  if [ -f "$c/.claude/_lib/memo-index.sh" ]; then
     COO="$(cd "$c" && pwd -P)"
     break
   fi
@@ -43,4 +43,4 @@ if [ -z "$COO" ]; then
   exit 0
 fi
 
-exec bash "$COO/.claude/commands/_lib/memo-index.sh" "$@"
+exec bash "$COO/.claude/_lib/memo-index.sh" "$@"

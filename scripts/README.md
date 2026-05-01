@@ -26,7 +26,7 @@ count justifies the cost of breaking references in `CLAUDE.md`,
   into session context.
 - `discussions-digest.sh` — prints new vade-app org discussions.
 - `memo-index.sh` — thin wrapper that delegates to
-  `vade-coo-memory/.claude/commands/_lib/memo-index.sh`.
+  `vade-coo-memory/.claude/_lib/memo-index.sh`.
 - `hooks-dispatch.sh` — central dispatcher resolving hook names to
   the canonical script via the five resolver rules (MEMO-2026-04-22-12).
 
