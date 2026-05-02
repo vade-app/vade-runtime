@@ -634,6 +634,15 @@ F4_ALLOWLIST_SHA=(
   # authored doc-add); PR body carries ven-human-action marker but
   # the merge stripped it. See vade-coo-memory#271 for the race fix.
   "0fd421a198"
+  # 7cb8a86da4 — vade-coo-memory direct commit "update gitignore" by
+  # Ven on 2026-05-01 outside the PR flow (no PR body, so the f4-marker
+  # workflow at vade-coo-memory/.github/workflows/f4-marker.yml had no
+  # surface to inject ven-human-action: into). Direct-to-main quick-fix
+  # by the BDFL is allowlisted by the same precedent that retired the
+  # 2 historical Ven-human-action quick-fixes pre-2026-04-26 (cf. the
+  # F_CUTOFF_GIT comment block above). Cleared in run-2026-05-02T120959
+  # full-bootup pass.
+  "7cb8a86da4"
 )
 if [ -d "$F_REPO/.git" ] && check_cmd git; then
   f4_total=0
