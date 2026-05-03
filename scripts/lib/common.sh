@@ -790,6 +790,56 @@ for a in data.get("assets", []):
   log "binary vendor: installed op gh uv mem0-mcp-server to $bindir"
 }
 
+# Pre-warm the uv cache so fresh snapshots don't pay a cold PyPI fetch
+# the first time a uv-shebang script runs. SessionEnd transcript export,
+# transcript-fetch (Night's Watch / Weekly Watch / transcript-analyzer),
+# and transcript-meta-backfill share `boto3>=1.34,<2`; on a flaky-egress
+# fresh container the first invocation can fail with `boto3 missing`
+# (issue #202). PR #190 added UV_CACHE_DIR=/home/user/.cache/uv to
+# settings.json env so the cache survives the snapshot → resume
+# transition; this function seeds that path at build time.
+#
+# Approach: run a dummy uv-script with the same PEP 723 metadata as the
+# three real scripts so uv resolves boto3>=1.34,<2 and persists the
+# wheel/sdist into UV_CACHE_DIR. The dummy exits immediately; the cache
+# survives.
+#
+# Fail-open: if uv is missing or the resolve fails (e.g., PyPI flake at
+# build time), per-script first-run PyPI fetch remains the fallback. No
+# additional error surface.
+prewarm_uv_cache() {
+  if ! check_cmd uv; then
+    build_log_record WARN "cloud-setup: uv not present; skipping uv cache pre-warm"
+    return 0
+  fi
+  local cache_dir="${UV_CACHE_DIR:-/home/user/.cache/uv}"
+  mkdir -p "$cache_dir" 2>/dev/null || true
+
+  local prewarm_script
+  prewarm_script="$(mktemp --suffix=.py)" || return 0
+  cat >"$prewarm_script" <<'PREWARM_PY'
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["boto3>=1.34,<2"]
+# ///
+# uv-cache pre-warm sentinel — see scripts/lib/common.sh prewarm_uv_cache.
+# Mirrors the PEP 723 metadata of the three boto3-using scripts:
+#   session-end-transcript-export.py, transcript-fetch.py,
+#   transcript-meta-backfill.py
+# Running this resolves boto3>=1.34,<2 into UV_CACHE_DIR so the real
+# scripts get a warm cache on first invocation.
+import sys
+sys.exit(0)
+PREWARM_PY
+
+  if UV_CACHE_DIR="$cache_dir" uv run --script "$prewarm_script" >/dev/null 2>&1; then
+    build_log_record OK "cloud-setup: uv cache pre-warmed (boto3>=1.34,<2 in $cache_dir)"
+  else
+    build_log_record WARN "cloud-setup: uv cache pre-warm failed; first uv-script run on this snapshot will fetch from PyPI (issue #202)"
+  fi
+  rm -f "$prewarm_script"
+}
+
 ensure_op_cli() {
   # Install into a snapshot-persistent path so a build-time install is
   # still on disk at session-resume time. /root/ resets each resume in
