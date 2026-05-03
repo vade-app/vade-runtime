@@ -313,6 +313,30 @@ def _emit_export_error(sidecar_dir: Path, session_id: str, exc: BaseException) -
     _stderr(f"wrote export-error: {err_path}")
 
 
+def _emit_meta_pr_error(sidecar_dir: Path, session_id: str, reason: str) -> None:
+    """Write a durable breadcrumb when the auto-PR step fails or is
+    skipped for non-design reasons. Sidecar lives next to where
+    meta.json would have landed in vade-agent-logs/transcripts/<date>/
+    so the failure is visible to operators (and to a next-session-on-
+    same-container debugger) even after the container that wrote it
+    tears down — closing the diagnostic gap left by stderr-only logging
+    in container-ephemeral LOG_FILE. Companion to _emit_export_error.
+
+    Refs vade-runtime#207 (the meta-vs-R2 asymmetry being instrumented)."""
+    try:
+        sidecar_dir.mkdir(parents=True, exist_ok=True)
+        err_path = sidecar_dir / f"{session_id}.meta-pr-error.txt"
+        with open(err_path, "w") as f:
+            f.write("# session-end-transcript-export.py: meta auto-PR failed/skipped\n")
+            f.write(f"# generated: {datetime.datetime.now(datetime.timezone.utc).isoformat()}\n")
+            f.write(f"# session_id: {session_id}\n\n")
+            f.write(f"reason: {reason}\n")
+        _stderr(f"wrote meta-pr-error: {err_path} (reason: {reason})")
+    except OSError as e:
+        # Best-effort durable logging; don't let breadcrumb failure cascade.
+        _stderr(f"could not write meta-pr-error breadcrumb: {e!r}")
+
+
 def _open_meta_pr(
     agent_logs_dir: Path,
     sidecar_path: Path,
@@ -325,17 +349,27 @@ def _open_meta_pr(
     vade-agent-logs).
 
     Best-effort: any failure is logged via export-error.txt and we
-    return None. Never raises, never blocks session end.
+    return None. Never raises, never blocks session end. Non-design
+    failures (env regressions, git op failures) also drop a durable
+    `<id>.meta-pr-error.txt` next to where meta.json would have gone
+    via _emit_meta_pr_error — so the asymmetry documented at #207
+    (R2 PUT yes, meta.json git-push no) becomes diagnosable rather
+    than silent across container teardowns.
 
     Returns the PR URL on success, None otherwise.
 
-    Skipped (no error) when:
+    Skipped silently (no breadcrumb) when:
       - VADE_TRANSCRIPT_EXPORT_DRY_RUN=1 or VADE_TRANSCRIPT_EXPORT_NO_PR=1
-      - GITHUB_MCP_PAT not set
+      - the auto-meta branch already exists upstream (idempotent re-fire)
+
+    Skipped with breadcrumb (operator should notice):
+      - GITHUB_MCP_PAT not set in hook env
       - `gh` binary not on PATH
       - agent_logs_dir is not a git working tree
-      - the auto-meta branch already exists upstream (idempotent re-fire)
+      - sidecar missing on disk (internal bug)
     """
+    sidecar_dir = sidecar_path.parent
+
     if os.environ.get("VADE_TRANSCRIPT_EXPORT_DRY_RUN", "").strip() == "1":
         _stderr("auto-PR skipped (DRY_RUN=1)")
         return None
@@ -346,15 +380,23 @@ def _open_meta_pr(
     pat = os.environ.get("GITHUB_MCP_PAT", "").strip()
     if not pat:
         _stderr("auto-PR skipped (GITHUB_MCP_PAT not set)")
+        _emit_meta_pr_error(sidecar_dir, session_id, "GITHUB_MCP_PAT not set in hook env")
         return None
     if not shutil.which("gh"):
         _stderr("auto-PR skipped (gh binary not on PATH)")
+        _emit_meta_pr_error(sidecar_dir, session_id, "gh binary not on PATH")
         return None
     if not (agent_logs_dir / ".git").exists():
         _stderr(f"auto-PR skipped ({agent_logs_dir} is not a git tree)")
+        _emit_meta_pr_error(
+            sidecar_dir, session_id, f"{agent_logs_dir} is not a git tree"
+        )
         return None
     if not sidecar_path.is_file():
         _stderr(f"auto-PR skipped (sidecar missing: {sidecar_path})")
+        _emit_meta_pr_error(
+            sidecar_dir, session_id, f"sidecar missing on disk: {sidecar_path}"
+        )
         return None
 
     short_sid = session_id[:12]
@@ -383,6 +425,9 @@ def _open_meta_pr(
     head_proc = _git("rev-parse", "HEAD", capture=True)
     if head_proc.returncode != 0:
         _stderr(f"auto-PR skipped (HEAD unresolvable: {head_proc.stderr.strip()})")
+        _emit_meta_pr_error(
+            sidecar_dir, session_id, f"HEAD unresolvable: {head_proc.stderr.strip()}"
+        )
         return None
     original_ref_proc = _git("rev-parse", "--abbrev-ref", "HEAD", capture=True)
     original_ref = (
@@ -395,6 +440,11 @@ def _open_meta_pr(
         fetch = _git("fetch", "origin", "main", capture=True)
         if fetch.returncode != 0:
             _stderr(f"auto-PR fetch origin/main failed: {fetch.stderr.strip()}")
+            _emit_meta_pr_error(
+                sidecar_dir,
+                session_id,
+                f"fetch origin/main failed: {fetch.stderr.strip()}",
+            )
             return None
 
         # Stage just the new meta.json against the index AT origin/main
@@ -402,6 +452,11 @@ def _open_meta_pr(
         switch = _git("switch", "-c", branch, "origin/main", capture=True)
         if switch.returncode != 0:
             _stderr(f"auto-PR switch -c {branch} failed: {switch.stderr.strip()}")
+            _emit_meta_pr_error(
+                sidecar_dir,
+                session_id,
+                f"switch -c {branch} failed: {switch.stderr.strip()}",
+            )
             return None
 
         # Re-write the sidecar at the same relative path on the new
@@ -413,6 +468,9 @@ def _open_meta_pr(
         add = _git("add", "--", rel_sidecar, capture=True)
         if add.returncode != 0:
             _stderr(f"auto-PR git add failed: {add.stderr.strip()}")
+            _emit_meta_pr_error(
+                sidecar_dir, session_id, f"git add failed: {add.stderr.strip()}"
+            )
             return None
 
         commit_msg = (
@@ -431,11 +489,17 @@ def _open_meta_pr(
         )
         if commit.returncode != 0:
             _stderr(f"auto-PR git commit failed: {commit.stderr.strip()}")
+            _emit_meta_pr_error(
+                sidecar_dir, session_id, f"git commit failed: {commit.stderr.strip()}"
+            )
             return None
 
         push = _git("push", "-u", "origin", branch, capture=True)
         if push.returncode != 0:
             _stderr(f"auto-PR git push failed: {push.stderr.strip()}")
+            _emit_meta_pr_error(
+                sidecar_dir, session_id, f"git push failed: {push.stderr.strip()}"
+            )
             return None
 
         body = (
@@ -473,6 +537,9 @@ def _open_meta_pr(
         )
         if pr.returncode != 0:
             _stderr(f"auto-PR gh pr create failed: {pr.stderr.strip()}")
+            _emit_meta_pr_error(
+                sidecar_dir, session_id, f"gh pr create failed: {pr.stderr.strip()}"
+            )
             return None
         url = pr.stdout.strip().splitlines()[-1] if pr.stdout.strip() else ""
         _stderr(f"auto-PR opened: {url}")
