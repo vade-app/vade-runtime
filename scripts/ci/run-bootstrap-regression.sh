@@ -13,8 +13,9 @@
 #      stay untouched.
 #   5. Run scripts/cloud-setup.sh (writes setup-receipt.json + invokes
 #      coo-bootstrap.sh under the mocks).
-#   6. Run scripts/session-start-sync.sh (which calls integrity-check.sh
-#      and emits integrity-check.json).
+#   6. Run scripts/session-start-sync.sh + integrity-check.sh explicitly
+#      (in live sessions integrity-check.sh runs inside coo-identity-digest;
+#      CI only runs session-start-sync, so we call it directly here).
 #   7. Read integrity-check.json, subtract VADE_CI_ALLOWLIST, fail if any
 #      degraded invariants remain.
 #   8. Render a markdown summary (groups + per-invariant table) to
@@ -155,6 +156,12 @@ log "Running scripts/session-start-sync.sh"
 # operator triaging the artifact can tell it's not a real session.
 export CLAUDE_CODE_SESSION_ID="ci-bootstrap-regression-${GITHUB_RUN_ID:-local}"
 bash "$RUNTIME_DST/scripts/session-start-sync.sh"
+
+# Run integrity-check.sh explicitly. In live sessions this is called by
+# coo-identity-digest.sh (hook position 4, after the platform repo-sync
+# settles). CI only runs session-start-sync, so we invoke it directly.
+log "Running scripts/integrity-check.sh"
+bash "$RUNTIME_DST/scripts/integrity-check.sh" 2>/dev/null || true
 
 # ── 7. Read integrity-check + apply allowlist ────────────────────
 INTEGRITY="${VADE_CLOUD_STATE_DIR:-$WORKSPACE_ROOT/.vade-cloud-state}/integrity-check.json"

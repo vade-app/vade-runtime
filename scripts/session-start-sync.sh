@@ -78,7 +78,7 @@ ensure_gh_coo_wrap "$SCRIPT_DIR/gh-coo-wrap.sh"
 # would clobber the well-formed PATH coo-bootstrap captured at install time.
 # vade-runtime#171.
 merge_coo_settings_state_dir
-# Emit integrity-check.json so its snapshot is on disk before the
-# digest hook runs (which may surface a one-line summary). Non-fatal.
-bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
+# integrity-check.sh runs in coo-identity-digest.sh instead of here,
+# so the check fires after the platform's repo-sync has settled
+# (vade-runtime#XXX; moved from here to eliminate boot-time false alarms).
 boot_log_record session-start-sync end ok

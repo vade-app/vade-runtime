@@ -340,6 +340,12 @@ echo "                            Sole GitHub write path. github-coo MCP retired
 echo "                            Epic #112 Stream 1; harness github MCP writes deny-listed."
 echo "───────────────────────────────────────────────────────────────"
 
+# Run the integrity check now, before reading results for display.
+# Placed here (not in session-start-sync.sh) so it fires after the
+# platform's git-proxy repo-sync has settled; running it earlier
+# produced boot-time false alarms on F2/F3/F4 (vade-runtime#XXX).
+bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
+
 # Mem0 read/write surface — same banner pattern as "GitHub write surface"
 # above. Per vade-runtime#109, the hosted Mem0 MCP at mcp.mem0.ai hits
 # the same Node `undici` DNS-cache-overflow class that kills github-coo,
@@ -410,8 +416,8 @@ esac
 echo "───────────────────────────────────────────────────────────────"
 
 # Integrity check summary — the authoritative "did this session's boot
-# pipeline land correctly" verdict. session-start-sync.sh writes this
-# to $VADE_CLOUD_STATE_DIR/integrity-check.json on every boot. The file
+# pipeline land correctly" verdict. Written to
+# $VADE_CLOUD_STATE_DIR/integrity-check.json by the call above. The file
 # itself is already read-on-demand by CLAUDE.md §14; this block echoes
 # the summary inline so routine-triggered sessions (non-startup matcher)
 # and automation instances see the posture without having to cat the
