@@ -89,7 +89,17 @@ setsid -f bash -c \
 # local sessions the harness will PG-kill the wrapper before the
 # budget elapses; the detached child survives via setsid -f and
 # completes anyway (#182 behavior preserved).
-BUDGET_SEC="${VADE_TRANSCRIPT_EXPORT_BUDGET_SEC:-20}"
+#
+# Budget sizing (vade-runtime#207, 2026-05-03): the marker is
+# touched after the entire Python pipeline exits, including
+# _open_meta_pr's git fetch/switch/commit/push + gh pr create.
+# Empirical worst case on cold cache: ~5-10s pre-R2 + ~5-15s for
+# auto-PR git ops + ~3-5s for `gh pr create` = up to ~30s. The
+# original 20s default left auto-PR to die mid-flight on hosted
+# teardown (R2 PUT yes, meta.json git-push no — the asymmetry
+# documented in #207). 60s covers the empirical worst case with
+# margin while keeping the user-visible session-end pause bounded.
+BUDGET_SEC="${VADE_TRANSCRIPT_EXPORT_BUDGET_SEC:-60}"
 i=0
 while [ "$i" -lt "$BUDGET_SEC" ]; do
   if [ -f "$MARKER" ]; then
