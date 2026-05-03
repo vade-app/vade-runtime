@@ -3,7 +3,7 @@
 # Sources ~/.vade/coo-env so R2_TRANSCRIPTS_* and TRANSCRIPTS_AGE_IDENTITY
 # are populated, then runs the Python implementation.
 #
-# Detach discipline (vade-runtime#NNN, 2026-04-30):
+# Detach discipline (vade-runtime#181/#182, 2026-04-30):
 # Under CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 (PR #177 / commit 9f706d7,
 # 2026-04-29 03:23 UTC) the harness kills the SessionEnd hook process
 # group before the Python export can finish — caught a 48-hour outage
@@ -12,17 +12,38 @@
 # `exec` did not survive the kill.
 #
 # Fix: fork the Python via `setsid -f` into a new process session so
-# the wrapper can return 0 immediately and the export survives the
-# harness teardown. Output goes to a per-invocation log under
-# ${HOME}/.vade/transcript-export-logs/ for debugging. The Python
-# script's own contract — always exit 0, drop <id>.export-error.txt
-# on internal failure — is preserved.
+# the wrapper can return 0 quickly and the export survives the harness
+# killing the SessionEnd hook process group.
+#
+# Wait-with-detach (vade-runtime#198, 2026-05-03):
+# `setsid -f` detach survives signal-based PG teardown but cannot
+# survive PID-namespace destruction when a hosted Claude Code container
+# terminates shortly after SessionEnd returns. 2026-05-02 saw 0/7
+# hosted sessions export to R2 — the export pipeline takes ~5–10s
+# (boto3 import, redact, encrypt, op-read, R2 PutObject, meta.json
+# auto-commit) and the container outlived <1s of that. Same
+# diagnostic shape as #181 (no <id>.export-error.txt drops because
+# SIGKILL fires before signal handlers).
+#
+# This wrapper now block-waits for the detached child up to
+# VADE_TRANSCRIPT_EXPORT_BUDGET_SEC (default 20s), holding the
+# SessionEnd hook open so the container's grace window covers the
+# export. Properties:
+#   - agent-teams local: harness PG-kills the wrapper; child survives
+#     via setsid -f (#182 behavior preserved).
+#   - hosted with grace window: wrapper waits, child completes, clean
+#     R2 export. ~5–10s user-visible session-end pause.
+#   - hosted with immediate teardown: no worse than today.
+#
+# The Python script's own contract — always exit 0, drop
+# <id>.export-error.txt on internal failure — is preserved.
 #
 # The fail-open contract holds: env-sourcing failure is non-fatal;
 # the Python script handles missing R2/age creds by writing
 # export-error.txt rather than raising.
 #
-# vade-app/vade-agent-logs#64 Batch 2; detach fix vade-runtime#NNN.
+# vade-app/vade-agent-logs#64 Batch 2; detach fix vade-runtime#182;
+# wait-with-detach vade-runtime#198.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -45,15 +66,41 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_FILE="$LOG_DIR/${TS}-$$.log"
 
+# Marker file the detached child touches on completion. The wrapper
+# polls for it inside the budget loop below.
+MARKER="$LOG_DIR/${TS}-$$.done"
+
 # Fork the Python child into a new session/PG so it survives the
 # harness killing the SessionEnd hook process group. setsid -f
 # (fork) is the load-bearing flag here — `nohup ... &; disown`
 # alone wasn't enough under agent-teams (the harness kills by PG,
 # not by signaling the wrapper). stdin closed; stdout/stderr to log.
-setsid -f "$SCRIPT_DIR/session-end-transcript-export.py" "$@" \
+# The child wrapper-script touches MARKER after the Python exits so
+# the parent can detect completion without holding a child PID
+# (setsid -f exits before exec'ing, so $! isn't the python's PID).
+setsid -f bash -c \
+  "\"$SCRIPT_DIR/session-end-transcript-export.py\" \"\$@\"; touch \"$MARKER\"" \
+  -- "$@" \
   </dev/null >"$LOG_FILE" 2>&1
 
-# Wrapper returns 0 immediately. The detached child continues in
-# its own session and writes meta.json + uploads to R2 on its own
-# clock, independent of how the harness handles this hook's exit.
+# Block-wait for the marker file up to BUDGET_SEC. On hosted
+# ephemeral containers this holds the SessionEnd hook open so the
+# container teardown grace window covers the export. On agent-teams
+# local sessions the harness will PG-kill the wrapper before the
+# budget elapses; the detached child survives via setsid -f and
+# completes anyway (#182 behavior preserved).
+BUDGET_SEC="${VADE_TRANSCRIPT_EXPORT_BUDGET_SEC:-20}"
+i=0
+while [ "$i" -lt "$BUDGET_SEC" ]; do
+  if [ -f "$MARKER" ]; then
+    rm -f "$MARKER"
+    break
+  fi
+  sleep 1
+  i=$((i + 1))
+done
+
+# Whether the child completed within budget or not, return 0. The
+# detached child keeps running on persistent envs; on hosted-teardown
+# we did our best with the available grace window.
 exit 0
