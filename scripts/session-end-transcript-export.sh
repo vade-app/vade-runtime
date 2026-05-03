@@ -47,6 +47,17 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Cold-start precondition (vade-runtime#208): on a fresh hosted
+# container the SessionEnd hook fires before Claude Code creates
+# ~/.claude/projects/. Without this gate the Python script bails with
+# "~/.claude/projects not found" and writes a cosmetic
+# unknown.export-error.txt that pollutes operator dashboards. Treat
+# the missing-projects case as a no-op: there's no live transcript to
+# export, by definition.
+if [ ! -d "${HOME}/.claude/projects" ]; then
+  exit 0
+fi
+
 # Source coo-env if present (provides R2 + age secrets). Fail-open: if
 # the file is missing, the Python script sees empty env vars and
 # degrades to writing export-error.txt (per design — never blocks).
