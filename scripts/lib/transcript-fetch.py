@@ -16,7 +16,8 @@ Designed for the Stage-1 transcript-analyzer sub-agent
 works as a standalone debugging CLI too.
 
 Usage:
-  bash scripts/lib/transcript-fetch.sh <session_id> [--meta <path>]
+  bash scripts/lib/transcript-fetch.sh <session_id> [--meta <path>] \\
+       [--on-mismatch={fail,skip,warn-decrypt}]
   bash scripts/lib/transcript-fetch.sh --cleanup <jsonl_path>
 
 If --meta is omitted, walks vade-agent-logs/transcripts/**/<id>.meta.json
@@ -39,6 +40,14 @@ Exits non-zero on any failure with a diagnostic to stderr. Unlike the
 export hook (which never blocks session end), this script is invoked
 synchronously by the analyzer and surfaces failure to the caller so
 the caller can decide whether to retry or skip.
+
+Mismatch policy (vade-runtime#210, 2026-05-03):
+  --on-mismatch=fail (default) — raise + exit 1 (pre-#210 behavior).
+  --on-mismatch=skip            — log + empty stdout + exit 0; sweep
+                                  callers detect skip via empty stdout.
+  --on-mismatch=warn-decrypt    — log + decrypt anyway; age's
+                                  authenticated decryption is the
+                                  secondary integrity check.
 """
 
 from __future__ import annotations
@@ -193,7 +202,40 @@ def _gunzip(src: Path, dst: Path) -> None:
         shutil.copyfileobj(fin, fout)
 
 
-def _fetch(session_id: str, meta_arg: str | None) -> Path:
+ON_MISMATCH_CHOICES = ("fail", "skip", "warn-decrypt")
+
+
+def _fetch(
+    session_id: str,
+    meta_arg: str | None,
+    on_mismatch: str = "fail",
+) -> Path | None:
+    """Fetch + decrypt a session jsonl from R2.
+
+    Returns the cache path on success, None when the SHA mismatched and
+    `on_mismatch="skip"` (caller treats as quarantine).
+
+    `on_mismatch` policy (vade-runtime#210):
+      - "fail" (default): raise RuntimeError, preserving the
+        pre-#210 hard-bail contract for callers that need pre-decrypt
+        integrity (the original Batch-3 spec).
+      - "skip": log mismatch to stderr, return None. Caller continues
+        with other sessions. Used by Night's Watch / Weekly Watch
+        sweeps where one bad session shouldn't block the rest.
+      - "warn-decrypt": log mismatch, attempt decrypt anyway. age
+        decryption is authenticated (Poly1305 over the ciphertext +
+        AEAD frame); a non-authentic ciphertext will still fail at
+        the age step, so this policy only succeeds when the SHA
+        record is stale relative to the canonical R2 bytes — useful
+        for forensic / manual-recovery flows that need decrypted
+        content even when the meta.json's SHA is known-drifted
+        (vade-runtime#204 historical population).
+    """
+    if on_mismatch not in ON_MISMATCH_CHOICES:
+        raise ValueError(
+            f"on_mismatch={on_mismatch!r} not in {ON_MISMATCH_CHOICES}"
+        )
+
     meta_path = Path(meta_arg) if meta_arg else _find_meta(session_id)
     if not meta_path.is_file():
         raise FileNotFoundError(f"meta.json not found at {meta_path}")
@@ -239,9 +281,21 @@ def _fetch(session_id: str, meta_arg: str | None) -> Path:
 
         actual_sha = _sha256(ciphertext)
         if actual_sha != expected_sha:
-            raise RuntimeError(
+            mismatch_msg = (
                 f"ciphertext_integrity_mismatch: meta sha256={expected_sha} "
                 f"download sha256={actual_sha} key={key}"
+            )
+            if on_mismatch == "fail":
+                raise RuntimeError(mismatch_msg)
+            if on_mismatch == "skip":
+                _stderr(f"{mismatch_msg} — skipping (--on-mismatch=skip)")
+                return None
+            # warn-decrypt: log + fall through to age step. age's
+            # authenticated decryption is the second integrity layer;
+            # a non-authentic ciphertext will still fail at `age -d`.
+            _stderr(
+                f"{mismatch_msg} — proceeding to decrypt (--on-mismatch=warn-decrypt); "
+                "age authenticated-decryption is the integrity check from here"
             )
 
         _age_decrypt(ciphertext, gz)
@@ -285,6 +339,19 @@ def main(argv: list[str]) -> int:
         "--cleanup",
         help="Delete the named cached jsonl path (must live under ~/.vade/transcript-cache/).",
     )
+    parser.add_argument(
+        "--on-mismatch",
+        choices=ON_MISMATCH_CHOICES,
+        default="fail",
+        help=(
+            "Policy when meta.json's ciphertext_sha256 does not match the "
+            "downloaded R2 object: 'fail' (default; pre-#210 behavior — "
+            "raise + non-zero exit), 'skip' (log + empty stdout + exit 0; "
+            "for sweep callers that quarantine and continue), 'warn-decrypt' "
+            "(log + decrypt anyway; age's authenticated decryption is the "
+            "secondary integrity check). Refs vade-runtime#210."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.cleanup:
@@ -299,11 +366,15 @@ def main(argv: list[str]) -> int:
         parser.error("session_id is required unless --cleanup is given")
 
     try:
-        out = _fetch(args.session_id, args.meta)
+        out = _fetch(args.session_id, args.meta, args.on_mismatch)
     except Exception as e:
         _stderr(f"fetch failed: {e}")
         return 1
 
+    if out is None:
+        # Skipped under --on-mismatch=skip. Empty stdout, exit 0 — caller
+        # detects skip via empty stdout. Stderr has the mismatch detail.
+        return 0
     sys.stdout.write(f"{out}\n")
     return 0
 
