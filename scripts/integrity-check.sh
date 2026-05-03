@@ -527,6 +527,89 @@ else
 fi
 _add E5 "$E5_ok" "$E5_detail"
 
+# E6: reserved for vade-runtime#201 (R2 transcript-absence alarm: alarms
+# when sessions exist locally but R2 has no objects in the prior 24h).
+# Currently OPEN, not yet implemented. E7 below deliberately gaps over
+# E6 rather than colliding with the proposed-but-not-yet-shipped invariant.
+_add E6 skip "reserved for vade-runtime#201 (R2 absence detection; not yet implemented)"
+
+# E7: R2 ciphertext SHA-mismatch sample (vade-runtime#209, MEMO 2026-05-03-bgk3).
+# Samples the K most-recent post-fix vade-agent-logs meta.json files,
+# GETs each R2 object, compares SHA256 to meta.ciphertext_sha256.
+# Fires (degraded) when any mismatch is found in the sample.
+#
+# Additive observability over the now-fixed pipeline: vade-runtime#212
+# landed atomic IfNoneMatch first-write-wins in
+# session-end-transcript-export.py at 2026-05-03T09:01:47Z (closing #204
+# + MEMO 2026-05-03-bgk3). Mismatches in post-fix sessions would
+# indicate a regression; pre-fix sessions are filtered out via the
+# probe's --post-cutoff parameter.
+#
+# Cost: K=3 GETs of ~400KB ciphertext each ≈ 1-2MB / 2-3s per boot.
+# Skips when R2 creds missing, vade-agent-logs absent, uv missing, or
+# CI fake-env active. Live-only invariant (CI staging has no R2).
+#
+# Tunable via env: VADE_E7_SAMPLE_K (default 3),
+# VADE_E7_POST_CUTOFF (default 2026-05-03T09:01:47+00:00).
+E7_ok=skip
+E7_detail="prerequisites missing"
+E7_K="${VADE_E7_SAMPLE_K:-3}"
+E7_CUTOFF="${VADE_E7_POST_CUTOFF:-2026-05-03T09:01:47+00:00}"
+E7_LOGS_DIR="${VADE_E7_LOGS_DIR:-/home/user/vade-agent-logs/transcripts}"
+if [ -n "${VADE_CI_WORKSPACE_ROOT:-}" ] || [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+  E7_ok=skip
+  E7_detail="skipped in CI fake-env (VADE_CI_WORKSPACE_ROOT or VADE_BINDIR_OVERRIDE set); live-only probe"
+elif [ -z "${R2_TRANSCRIPTS_ACCESS_KEY_ID:-}" ] || [ -z "${R2_TRANSCRIPTS_SECRET_ACCESS_KEY:-}" ]; then
+  E7_ok=skip
+  E7_detail="R2_TRANSCRIPTS_{ACCESS,SECRET}_KEY missing in env (live probe needs creds)"
+elif [ ! -d "$E7_LOGS_DIR" ]; then
+  E7_ok=skip
+  E7_detail="$E7_LOGS_DIR absent (no meta.json corpus to sample)"
+elif ! check_cmd uv; then
+  E7_ok=skip
+  E7_detail="uv missing (required for boto3 probe)"
+elif ! check_cmd timeout; then
+  E7_ok=skip
+  E7_detail="timeout missing (cannot bound probe)"
+else
+  E7_probe_script="$SCRIPT_DIR/integrity-check-e7-r2-sha.py"
+  if [ ! -x "$E7_probe_script" ]; then
+    E7_ok=skip
+    E7_detail="probe script not executable: $E7_probe_script"
+  else
+    E7_out="$(timeout 20 "$E7_probe_script" \
+      --sample-k "$E7_K" \
+      --post-cutoff "$E7_CUTOFF" \
+      --logs-dir "$E7_LOGS_DIR" \
+      2>/dev/null || echo 'ERROR|probe-timeout-or-failure')"
+    IFS='|' read -r E7_status E7_a E7_b E7_c <<<"$E7_out"
+    case "$E7_status" in
+      OK)
+        if [ "${E7_b:-0}" = "0" ] && [ "${E7_c:-0}" = "0" ]; then
+          E7_ok=true
+          E7_detail="$E7_a/$E7_a post-fix R2 ciphertext SHAs match meta sidecars (K=$E7_K, cutoff $E7_CUTOFF)"
+        else
+          E7_ok=false
+          E7_detail="$E7_b/$E7_a post-fix R2 ciphertext SHA mismatches + $E7_c errors — regression in #212 atomic IfNoneMatch fix or upload contract; see vade-runtime#209, MEMO 2026-05-03-bgk3"
+        fi
+        ;;
+      SKIP)
+        E7_ok=skip
+        E7_detail="probe skip: ${E7_a:-no reason} ${E7_b:-} ${E7_c:-}"
+        ;;
+      ERROR)
+        E7_ok=false
+        E7_detail="probe error: ${E7_a:-no message} ${E7_b:-} ${E7_c:-}"
+        ;;
+      *)
+        E7_ok=false
+        E7_detail="probe produced unexpected output: $(printf '%s' "$E7_out" | head -c 200)"
+        ;;
+    esac
+  fi
+fi
+_add E7 "$E7_ok" "$E7_detail"
+
 # ── Group F: Culture-system substrate discipline ─────────────
 # Implements E1–E4 from coo/foundations/2026-04-22_we-can-claim-a-record.md
 # §5d (label delta: the essay calls these E1–E4; Group E is occupied by
