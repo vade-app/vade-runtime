@@ -21,11 +21,17 @@ Pipeline per invocation:
   6. boto3 upload to Cloudflare R2 at
      transcripts/YYYY/MM/DD/<id>.jsonl.gz.age (date from first event
      timestamp, falling back to UTC-now).
-  7. Write a sidecar at <vade-agent-logs>/transcripts/YYYY/MM/DD/<id>.meta.json
+  7. boto3 upload of meta.json to Cloudflare R2 at
+     transcripts/meta/<id>.meta.json (primary durability per
+     vade-runtime#207 fix shape (b), 2026-05-03). Flat-by-id key so
+     transcript-fetch can resolve meta from session_id alone without
+     needing the date hierarchy.
+  8. Write a sidecar at <vade-agent-logs>/transcripts/YYYY/MM/DD/<id>.meta.json
      with parser_version, exported_at, event count, byte sizes,
-     redaction hits, ciphertext sha256, and the R2 object key. The
-     sidecar is committed by the agent at session end (alongside the
-     human session log).
+     redaction hits, ciphertext sha256, and the R2 object keys.
+     Best-effort secondary copy for GitHub-browsable history; failure
+     here no longer affects durability since R2 already holds the
+     canonical record from step 7.
 
 Always exits 0. Any uncaught failure drops <id>.export-error.txt next
 to where the meta.json would have gone, so the absence of meta.json +
@@ -661,8 +667,17 @@ def main() -> int:
                 }
                 r2_target["uploaded"] = True
 
+            # Flat-by-id meta key on R2 (vade-runtime#207 fix shape (b),
+            # 2026-05-03): transcript-fetch resolves meta from session_id
+            # alone without needing the date hierarchy, so this prefix is
+            # NOT colocated with the date-organized ciphertext. Both keys
+            # are recorded in r2_target so backfill / forensic tooling can
+            # navigate either direction.
+            meta_r2_key = f"transcripts/meta/{session_id}.meta.json"
+            r2_target["meta_key"] = meta_r2_key
+
             sidecar = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "parser_version": PARSER_VERSION,
                 "session_id": session_id,
                 "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -680,6 +695,46 @@ def main() -> int:
                 "age_recipient_file": str(RECIPIENT_FILE.relative_to(RUNTIME_ROOT)),
                 "age_recipient_pubkey": _read_recipient_pubkey(),
             }
+
+            # R2 PUT(meta) — primary durability for vade-runtime#207. The
+            # auto-PR git-push chain races container teardown and silently
+            # SIGKILLs mid-pipeline; R2 is the only durable surface that
+            # survives the kill window between ciphertext upload and
+            # session-end. By staging meta to R2 here, before the
+            # vade-agent-logs git operations, we guarantee that any
+            # session whose ciphertext landed also has its meta — without
+            # depending on git-push, gh-pr-create, or container survival.
+            # The local file write + auto-PR below remain best-effort
+            # secondary for GitHub-browsable history.
+            meta_temp = tmp_path / f"{session_id}.meta.json"
+            meta_temp.write_text(json.dumps(sidecar, indent=2) + "\n")
+            if dry_run:
+                _stderr(f"R2 meta PUT skipped (DRY_RUN=1): would write to {meta_r2_key}")
+            else:
+                try:
+                    meta_upload = _r2_upload(meta_temp, meta_r2_key)
+                    if meta_upload.get("ceded"):
+                        _stderr(
+                            f"R2 meta PUT ceded (idempotent re-fire): key={meta_r2_key}"
+                        )
+                    else:
+                        _stderr(f"wrote R2 meta: {meta_r2_key}")
+                except BaseException as e:
+                    # Best-effort: meta R2 PUT failure doesn't block; the
+                    # local file write + auto-PR chain remain as fallback.
+                    # Drop a durable breadcrumb so operators can detect the
+                    # primary-durability path failed (the local fallback
+                    # may still succeed and mask the issue otherwise).
+                    _stderr(
+                        f"R2 meta PUT failed: {e!r} "
+                        "(best-effort; falling through to local + auto-PR)"
+                    )
+                    _emit_meta_pr_error(
+                        sidecar_dir,
+                        session_id,
+                        f"R2 meta PUT failed: {e!r}",
+                    )
+
             sidecar_path = sidecar_dir / f"{session_id}.meta.json"
             with open(sidecar_path, "w") as f:
                 json.dump(sidecar, f, indent=2)

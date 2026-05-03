@@ -20,8 +20,14 @@ Usage:
        [--on-mismatch={fail,skip,warn-decrypt}]
   bash scripts/lib/transcript-fetch.sh --cleanup <jsonl_path>
 
-If --meta is omitted, walks vade-agent-logs/transcripts/**/<id>.meta.json
-to locate the sidecar.
+Meta resolution order (when --meta is omitted):
+  1. vade-agent-logs/transcripts/**/<id>.meta.json walk (fast local path).
+  2. R2 GetObject at transcripts/meta/<id>.meta.json (vade-runtime#207
+     fix shape (b), 2026-05-03 — R2 is the canonical durable record;
+     the vade-agent-logs copy is best-effort secondary). The walk
+     misses for any session whose auto-PR chain failed (the original
+     #207 symptom), so the R2 fallback is what makes meta-asymmetric
+     sessions readable.
 
 The decrypted jsonl is written to a per-invocation temp file under
 $HOME/.vade/transcript-cache/. Callers should `--cleanup` it when
@@ -126,7 +132,12 @@ def _op_read(ref: str) -> str:
         return ""
 
 
-def _r2_download(bucket: str, key: str, endpoint: str, dst: Path) -> None:
+def _r2_client(endpoint: str):
+    """Build an R2 boto3 client for the transcripts bucket. Caller passes
+    the endpoint (already resolved via op or otherwise) so this function
+    has no implicit 1Password dependency — important for the
+    R2-meta-fallback path which needs to fetch meta before any sidecar
+    is parsed."""
     access_key = os.environ.get("R2_TRANSCRIPTS_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_TRANSCRIPTS_SECRET_ACCESS_KEY", "").strip()
     if not access_key or not secret_key:
@@ -138,7 +149,7 @@ def _r2_download(bucket: str, key: str, endpoint: str, dst: Path) -> None:
     import boto3
     from botocore.config import Config
 
-    s3 = boto3.client(
+    return boto3.client(
         "s3",
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
@@ -149,7 +160,47 @@ def _r2_download(bucket: str, key: str, endpoint: str, dst: Path) -> None:
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
+
+
+def _r2_download(bucket: str, key: str, endpoint: str, dst: Path) -> None:
+    s3 = _r2_client(endpoint)
     s3.download_file(bucket, key, str(dst))
+
+
+def _fetch_meta_from_r2(session_id: str) -> dict:
+    """Resolve meta.json for `session_id` directly from R2.
+
+    Used as a fallback when vade-agent-logs lookup fails. Post-#207 fix
+    shape (b): the R2 meta at `transcripts/meta/<id>.meta.json` is the
+    canonical durable record; the vade-agent-logs copy is best-effort
+    secondary for GitHub browsing. Sessions whose auto-PR chain failed
+    have R2 meta but no vade-agent-logs file.
+
+    Returns the parsed sidecar dict.
+    """
+    endpoint = _op_read("op://COO/r2-transcripts/endpoint")
+    bucket = _op_read("op://COO/r2-transcripts/bucket")
+    if not endpoint or not bucket:
+        raise RuntimeError(
+            "R2 endpoint or bucket not readable from "
+            "op://COO/r2-transcripts/{endpoint,bucket}"
+        )
+
+    meta_key = f"transcripts/meta/{session_id}.meta.json"
+    s3 = _r2_client(endpoint)
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=meta_key)
+    except Exception as e:
+        raise FileNotFoundError(
+            f"meta.json not on R2 at {meta_key!r}: {e!r}"
+        ) from e
+    body = obj["Body"].read()
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise RuntimeError(
+            f"R2 meta at {meta_key} not valid utf-8 JSON: {e!r}"
+        ) from e
 
 
 def _sha256(path: Path) -> str:
@@ -236,10 +287,26 @@ def _fetch(
             f"on_mismatch={on_mismatch!r} not in {ON_MISMATCH_CHOICES}"
         )
 
-    meta_path = Path(meta_arg) if meta_arg else _find_meta(session_id)
-    if not meta_path.is_file():
-        raise FileNotFoundError(f"meta.json not found at {meta_path}")
-    meta = json.loads(meta_path.read_text())
+    if meta_arg:
+        meta_path = Path(meta_arg)
+        if not meta_path.is_file():
+            raise FileNotFoundError(f"meta.json not found at {meta_path}")
+        meta = json.loads(meta_path.read_text())
+    else:
+        # Try vade-agent-logs first (fast local file walk); fall back to
+        # R2 GetObject when the local walk misses. Post-#207 fix shape (b)
+        # made R2 the canonical durable record; the vade-agent-logs copy
+        # is best-effort secondary, so the R2 fallback is required for
+        # any session whose auto-PR chain failed.
+        try:
+            meta_path = _find_meta(session_id)
+            meta = json.loads(meta_path.read_text())
+        except FileNotFoundError as local_err:
+            _stderr(
+                f"meta not in vade-agent-logs ({local_err}); "
+                "falling back to R2 (post-#207 canonical record)"
+            )
+            meta = _fetch_meta_from_r2(session_id)
 
     if meta.get("session_id") != session_id:
         raise RuntimeError(

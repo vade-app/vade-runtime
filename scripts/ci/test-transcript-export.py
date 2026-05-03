@@ -191,12 +191,20 @@ def main() -> int:
 
         if meta["session_id"] != sid:
             fail(f"session_id mismatch: {meta['session_id']!r} != {sid!r}")
-        if meta["schema_version"] != 1:
-            fail(f"schema_version != 1: {meta['schema_version']}")
+        if meta["schema_version"] != 2:
+            fail(f"schema_version != 2: {meta['schema_version']}")
         if meta["events_processed"] != 4:
             fail(f"events_processed != 4: {meta['events_processed']}")
         if meta["r2"].get("uploaded") is not False:
             fail(f"dry-run should set r2.uploaded=false; got {meta['r2']}")
+        # vade-runtime#207 fix shape (b): meta_key must be set in r2_target,
+        # pointing at the flat-by-id R2 prefix used for the canonical record.
+        expected_meta_key = f"transcripts/meta/{sid}.meta.json"
+        if meta["r2"].get("meta_key") != expected_meta_key:
+            fail(
+                f"r2.meta_key mismatch: got {meta['r2'].get('meta_key')!r}, "
+                f"expected {expected_meta_key!r}"
+            )
 
         sha = meta["ciphertext_sha256"]
         if not (isinstance(sha, str) and len(sha) == 64
@@ -213,7 +221,8 @@ def main() -> int:
     print(textwrap.dedent("""\
         OK: transcript-export-hook smoke
           - sidecar shape: 12+ keys
-          - schema_version: 1
+          - schema_version: 2
+          - r2.meta_key set (flat-by-id; #207 fix shape (b))
           - events_processed: 4
           - thinking-block redacted
           - r2-secret-access-key redacted
