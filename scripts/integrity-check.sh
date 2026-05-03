@@ -456,6 +456,74 @@ else
       E5_detail="api.mem0.ai unreachable: handshake ok but get_memories round-trip failed — $_e5_rt_err. Probe: curl https://api.mem0.ai/v1/ping/ ; if 503/DNS-cache-overflow, defer Mem0 writes (memo-sync, identity loads) until upstream recovers."
     fi
   fi
+
+  # E5 retry: one attempt after a 2s delay on transient failures.
+  # Addresses boot-time false alarms when api.mem0.ai or the MCP server
+  # hasn't finished initialising by the time the probe first fires.
+  if [ "$E5_ok" = false ]; then
+    sleep 2
+    E5_probe_out="$(
+      {
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"integrity-check","version":"1.0"}}}'
+        sleep 0.2
+        printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+        sleep 0.1
+        printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+        sleep 0.5
+        printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_memories","arguments":{"filters":{"AND":[{"user_id":"coo"}]},"page":1,"page_size":1}}}'
+        sleep 3
+      } | MEM0_API_KEY="$MEM0_API_KEY" timeout 10 "$_mem0_bin" 2>/dev/null \
+        | head -4
+    )"
+    E5_verdict="$(printf '%s' "$E5_probe_out" | node -e '
+      let data = "";
+      process.stdin.on("data", c => data += c);
+      process.stdin.on("end", () => {
+        const lines = data.split("\n").filter(Boolean);
+        let serverName = null;
+        let toolNames = [];
+        let roundTripOk = false;
+        let roundTripError = null;
+        for (const l of lines) {
+          try {
+            const m = JSON.parse(l);
+            if (m.id === 1 && m.result?.serverInfo?.name) serverName = m.result.serverInfo.name;
+            if (m.id === 2 && Array.isArray(m.result?.tools)) toolNames = m.result.tools.map(t => t.name);
+            if (m.id === 3) {
+              if (m.error) {
+                roundTripError = (m.error.message || JSON.stringify(m.error)).slice(0, 160);
+              } else if (m.result?.isError) {
+                const txt = m.result.content?.[0]?.text || JSON.stringify(m.result.content || m.result);
+                roundTripError = ("isError: " + txt).slice(0, 160);
+              } else if (m.result) {
+                roundTripOk = true;
+              }
+            }
+          } catch {}
+        }
+        const required = ["get_memories", "search_memories", "add_memory"];
+        const missing = required.filter(n => !toolNames.includes(n));
+        const handshakeOk = serverName === "mem0" && missing.length === 0;
+        const out = {
+          serverName,
+          toolCount: toolNames.length,
+          missing,
+          handshakeOk,
+          roundTripOk,
+          roundTripError,
+          ok: handshakeOk && roundTripOk,
+        };
+        process.stdout.write(JSON.stringify(out));
+      });
+    ' 2>/dev/null)"
+    if [ -n "$E5_verdict" ] && printf '%s' "$E5_verdict" | grep -q '"ok":true'; then
+      E5_ok=true
+      E5_tools="$(printf '%s' "$E5_verdict" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const o=JSON.parse(d);process.stdout.write(o.toolCount+"")}catch{process.stdout.write("?")}})' 2>/dev/null || echo "?")"
+      E5_detail="stdio Mem0 MCP healthy: $_mem0_bin (handshake ok, $E5_tools tools, get_memories round-trip ok)"
+    fi
+    # If still failing after retry, keep the detail from the first attempt
+    # (it has the specific error message) and let it fall through to _add.
+  fi
 fi
 _add E5 "$E5_ok" "$E5_detail"
 
