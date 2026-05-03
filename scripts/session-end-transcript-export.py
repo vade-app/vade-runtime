@@ -264,8 +264,24 @@ def _op_read(ref: str) -> str:
 
 
 def _r2_upload(local: Path, key: str) -> dict:
-    """Upload a local file to R2 at the given key. Returns a dict with
-    bucket+key+endpoint for the sidecar; raises on failure."""
+    """Upload a local file to R2 at the given key with first-write-wins
+    semantics. Returns a dict with bucket+key+endpoint for the sidecar
+    plus `ceded: bool` indicating whether another writer already held
+    the key. Raises on non-precondition failures.
+
+    First-write-wins via `IfNoneMatch='*'` (vade-runtime#204, MEMO 2026-05-03-bgk3):
+    age encryption is non-deterministic (fresh X25519 ephemeral keypair
+    per call), so two writers encrypting the same plaintext produce
+    different ciphertext bytes. Without atomic-create, last-write-wins
+    on R2 leaves a meta.json `ciphertext_sha256` referencing bytes that
+    are no longer there. R2 honors S3's `IfNoneMatch: *` (Cloudflare
+    2024+) and returns HTTP 412 PreconditionFailed when the key
+    already exists; the second writer cedes silently.
+
+    Caller MUST check `ceded` before writing meta.json — a ceded
+    writer's SHA does not match what's in R2 and writing it would
+    re-create the mismatch this fix prevents.
+    """
     access_key = os.environ.get("R2_TRANSCRIPTS_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_TRANSCRIPTS_SECRET_ACCESS_KEY", "").strip()
     if not access_key or not secret_key:
@@ -283,6 +299,7 @@ def _r2_upload(local: Path, key: str) -> dict:
 
     import boto3  # imported lazily — uv resolves on first run
     from botocore.config import Config
+    from botocore.exceptions import ClientError
 
     s3 = boto3.client(
         "s3",
@@ -295,8 +312,23 @@ def _r2_upload(local: Path, key: str) -> dict:
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
-    s3.upload_file(str(local), bucket, key)
-    return {"bucket": bucket, "key": key, "endpoint": endpoint}
+
+    try:
+        with open(local, "rb") as fin:
+            s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=fin,
+                IfNoneMatch="*",
+            )
+        return {"bucket": bucket, "key": key, "endpoint": endpoint, "ceded": False}
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        status = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code == "PreconditionFailed" or status == 412:
+            _stderr(f"R2 PUT ceded (key exists, first-write-wins): {key}")
+            return {"bucket": bucket, "key": key, "endpoint": endpoint, "ceded": True}
+        raise
 
 
 def _emit_export_error(sidecar_dir: Path, session_id: str, exc: BaseException) -> None:
@@ -606,7 +638,28 @@ def main() -> int:
                 }
             else:
                 upload = _r2_upload(ciphertext, r2_key)
-                r2_target = {**upload, "uploaded": True}
+                # First-write-wins cede (vade-runtime#204): another writer
+                # already holds this R2 key. Our ciphertext_sha256 does NOT
+                # match what's in R2 — writing meta.json with our SHA would
+                # re-create the mismatch this fix prevents. Drop a
+                # breadcrumb so operators can trace which session ceded,
+                # then exit cleanly without writing the sidecar or
+                # opening the auto-PR. The canonical writer's meta.json
+                # (or transcript-meta-backfill.py's stub) wins.
+                if upload.get("ceded"):
+                    _emit_meta_pr_error(
+                        sidecar_dir,
+                        session_id,
+                        f"R2 PUT ceded to first writer (key={r2_key}); skipped meta.json write",
+                    )
+                    return 0
+                # Strip the transient `ceded` flag so meta.json schema stays
+                # clean — only the canonical-writer path reaches here, so
+                # `ceded` is always False.
+                r2_target = {
+                    k: v for k, v in upload.items() if k != "ceded"
+                }
+                r2_target["uploaded"] = True
 
             sidecar = {
                 "schema_version": 1,
