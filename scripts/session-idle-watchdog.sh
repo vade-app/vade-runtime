@@ -20,23 +20,35 @@
 #   3. If grace passes without activity, the worker fires the close
 #      sequence (--close), then exits 0.
 #
-# Close sequence (mechanical, since no Claude is running):
-#   a. Invoke `session-end-transcript-export.sh` with CLAUDE_SESSION_ID
-#      pinned to the watched jsonl's basename. The export hook already
-#      handles redact + age + R2 upload + meta.json sidecar drop.
-#   b. Write a stub session log at
+# Close sequence (mark-only since vade-runtime#204):
+#   a. Write a stub session log at
 #      <vade-agent-logs>/sessions/YYYY/MM/DD/coo-idle-close-<id>.md
 #      with status=incomplete, started_at/ended_at from jsonl event
-#      timestamps, and a pointer to the meta.json sidecar.
-#   c. POST a minimal Mem0 episodic entry (event=session_summary,
+#      timestamps, and a pointer to the meta.json sidecar IF one
+#      already exists (from a prior SessionEnd that ran inside this
+#      session's lifetime).
+#   b. POST a minimal Mem0 episodic entry (event=session_summary,
 #      idle_close=true, summary_pending=true, artifact_refs=[stub-log,
 #      sidecar]) via the Mem0 REST API with $MEM0_API_KEY from coo-env.
 #      Tier-1 safe text only — no transcript content (MEMO-2026-04-11-10).
-#   d. git add + commit + push the stub-log and any new sidecar files
+#   c. git add + commit + push the stub-log and any new sidecar files
 #      under `<vade-agent-logs>/transcripts/**/<id>.{meta,export-error}.{json,txt}`.
 #      Identity is the cloud container's vade-coo gitconfig + PAT, so
 #      attribution stays correct.
-#   e. PID-file cleanup, exit 0.
+#   d. PID-file cleanup, exit 0.
+#
+# Mark-only rationale (vade-runtime#204, MEMO 2026-05-03-bgk3):
+# Pre-#204 the watchdog also invoked session-end-transcript-export.sh
+# from cmd_close — a second writer racing the SessionEnd-final hook
+# against the same R2 key. Under age's non-deterministic encryption,
+# the second write replaced the ciphertext bytes that the first
+# writer's meta.json's `ciphertext_sha256` referenced — endemic 65%
+# SHA mismatch (W18d data). The architectural fix pairs storage-level
+# IfNoneMatch (in session-end-transcript-export.py:_r2_upload) with
+# canonical-writer designation: SessionEnd-final wins, watchdog
+# records intent only. The SIGTERM trap in cmd_run remains a
+# last-resort export under container teardown — safe under
+# IfNoneMatch since a parallel SessionEnd-final will cede cleanly.
 #
 # SessionStart on the next session reads any prior `coo-idle-close-*.md`
 # files via `session-lifecycle.sh --start` and surfaces a boot reminder
@@ -267,14 +279,14 @@ cmd_close() {
     log "coo-env not found at $COO_ENV — Mem0/git steps will degrade"
   fi
 
-  # ---- a. Mechanical export ------------------------------------------------
-  if [ -x "$EXPORT_HOOK" ]; then
-    log "invoking transcript export hook with CLAUDE_SESSION_ID=$session_id"
-    CLAUDE_SESSION_ID="$session_id" bash "$EXPORT_HOOK" </dev/null \
-      >> "$WATCHDOG_LOG" 2>&1 || true
-  else
-    log "export hook missing or non-executable at $EXPORT_HOOK; skipping"
-  fi
+  # ---- a. Mark-only — no R2 export from cmd_close (vade-runtime#204) ------
+  # The watchdog records intent and writes the stub session log; the
+  # canonical R2 write belongs to SessionEnd-final (or to the SIGTERM
+  # trap in cmd_run if the container is tearing down with us alive).
+  # Pre-#204 this step invoked session-end-transcript-export.sh and
+  # raced the SessionEnd-final hook for the same session_id, producing
+  # the W18d 65%-mismatch population. Removed deliberately.
+  log "mark-only close (vade-runtime#204): not invoking export hook from cmd_close"
 
   # Resolve agent-logs working tree once — both the closer-spawn path
   # and the stub-fallback path need it.
