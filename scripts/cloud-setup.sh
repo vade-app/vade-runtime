@@ -112,6 +112,12 @@ else
   build_log_record WARN "cloud-setup: binary vendor bundle unavailable; falling back to per-binary direct fetch"
 fi
 
+# Pre-warm uv cache for the boto3-dependent transcript scripts so fresh
+# snapshots start with a hot cache. Closes #202. Runs after
+# ensure_binaries_from_vendor (provides uv) and before any per-binary
+# install path so the cache lives on the snapshot before later steps.
+prewarm_uv_cache
+
 # Install the op CLI at snapshot-build time so the SessionStart-hook
 # bootstrap fallback never has to fetch it through the egress proxy
 # mid-session. The binary lands in /home/user/.local/bin/op which
