@@ -527,11 +527,76 @@ else
 fi
 _add E5 "$E5_ok" "$E5_detail"
 
-# E6: reserved for vade-runtime#201 (R2 transcript-absence alarm: alarms
-# when sessions exist locally but R2 has no objects in the prior 24h).
-# Currently OPEN, not yet implemented. E7 below deliberately gaps over
-# E6 rather than colliding with the proposed-but-not-yet-shipped invariant.
-_add E6 skip "reserved for vade-runtime#201 (R2 absence detection; not yet implemented)"
+# E6: R2 transcript-absence alarm (vade-runtime#201, MEMO-2026-05-04-mzeq).
+# Counts *.jsonl under ~/.claude/projects in the last VADE_E6_WINDOW_H
+# hours (default 24); if > 0 and R2 has zero objects in the matching
+# date prefixes, alarms. Catches total-loss-of-export — the failure
+# mode of vade-runtime#181 (agent-teams SIGKILL, 48h outage 04-29→04-30)
+# and #198 (recurrence). Sibling to E7 (#209, SHA mismatch) and E8
+# (#217, orphan meta); jointly cover loss / corruption / partial.
+#
+# Per MEMO-2026-05-04-mzeq principle 2, "closed" requires both a fix
+# AND a continuous detector. E6 covers the absence axis.
+#
+# Cost: rglob over ~/.claude/projects (cheap; bounded by session
+# count) + 2 R2 LISTs per boot. Skips when R2 creds missing, uv
+# missing, timeout missing, or CI fake-env active. Live-only invariant.
+#
+# Tunable via env: VADE_E6_WINDOW_H (default 24),
+# VADE_E6_PROJECTS_DIR (default ~/.claude/projects).
+E6_ok=skip
+E6_detail="prerequisites missing"
+E6_WINDOW_H="${VADE_E6_WINDOW_H:-24}"
+E6_PROJECTS_DIR="${VADE_E6_PROJECTS_DIR:-$HOME/.claude/projects}"
+if [ -n "${VADE_CI_WORKSPACE_ROOT:-}" ] || [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+  E6_ok=skip
+  E6_detail="skipped in CI fake-env (VADE_CI_WORKSPACE_ROOT or VADE_BINDIR_OVERRIDE set); live-only probe"
+elif [ -z "${R2_TRANSCRIPTS_ACCESS_KEY_ID:-}" ] || [ -z "${R2_TRANSCRIPTS_SECRET_ACCESS_KEY:-}" ]; then
+  E6_ok=skip
+  E6_detail="R2_TRANSCRIPTS_{ACCESS,SECRET}_KEY missing in env (live probe needs creds)"
+elif ! check_cmd uv; then
+  E6_ok=skip
+  E6_detail="uv missing (required for boto3 probe)"
+elif ! check_cmd timeout; then
+  E6_ok=skip
+  E6_detail="timeout missing (cannot bound probe)"
+else
+  E6_probe_script="$SCRIPT_DIR/integrity-check-e6-r2-absence.py"
+  if [ ! -x "$E6_probe_script" ]; then
+    E6_ok=skip
+    E6_detail="probe script not executable: $E6_probe_script"
+  else
+    E6_out="$(timeout 30 "$E6_probe_script" \
+      --window-h "$E6_WINDOW_H" \
+      --projects-dir "$E6_PROJECTS_DIR" \
+      2>/dev/null || echo '')"
+    if [ -z "$E6_out" ]; then
+      E6_ok=false
+      E6_detail="probe produced no output (timeout, missing uv, or process error)"
+    elif check_cmd node; then
+      E6_parsed="$(printf '%s' "$E6_out" | node -e '
+        let d = "";
+        process.stdin.on("data", c => d += c);
+        process.stdin.on("end", () => {
+          try {
+            const o = JSON.parse(d);
+            const ok = o.ok === true ? "true" : "false";
+            const detail = (o.detail || "").replace(/[|\n\r]/g, " ");
+            process.stdout.write(ok + "|" + detail);
+          } catch {
+            process.stdout.write("false|probe output not JSON-parseable: " + d.slice(0, 160));
+          }
+        });
+      ' 2>/dev/null)"
+      IFS='|' read -r E6_ok E6_detail <<<"$E6_parsed"
+      [ -z "$E6_ok" ] && { E6_ok=false; E6_detail="probe parser produced empty verdict"; }
+    else
+      E6_ok=skip
+      E6_detail="node missing; cannot parse probe output"
+    fi
+  fi
+fi
+_add E6 "$E6_ok" "$E6_detail"
 
 # E7: R2 ciphertext SHA-mismatch sample (vade-runtime#209, MEMO 2026-05-03-bgk3).
 # Samples the K most-recent post-fix vade-agent-logs meta.json files,
