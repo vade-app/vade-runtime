@@ -118,5 +118,8 @@ jobs:
       - name: Transcript export hook — smoke (dry-run, isolated $HOME)
         run: python3 "$GITHUB_WORKSPACE/scripts/ci/test-transcript-export.py"
 
+      - name: Transcript export wrapper — budget contract (vade-runtime#200)
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/test-transcript-export-wrapper.sh"
+
       - name: Idle watchdog — close sequence smoke (vade-agent-logs#67)
         run: bash "$GITHUB_WORKSPACE/scripts/ci/test-session-idle-watchdog.sh"
