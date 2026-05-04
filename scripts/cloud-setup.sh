@@ -257,6 +257,16 @@ else
   log "OP_SERVICE_ACCOUNT_TOKEN not visible at setup time; SessionStart hook will run coo-bootstrap."
 fi
 
+# Pre-warm the external-touch (F6) cache into the snapshot so the first
+# session of a fresh container reports F6 ok rather than "cache absent
+# — refresh via bin/external-touch.py" (which required a manual handoff
+# step on every cold boot). Runs after coo-bootstrap so $GITHUB_MCP_PAT
+# is exported; fail-open if either is missing or external-touch.py is
+# absent (CI fake-env stages a stub vade-coo-memory without it).
+# vade-coo-memory#429 cache-refresh follow-up.
+. "$HOME/.vade/coo-env" 2>/dev/null || true
+prewarm_external_touch_cache "$WORKSPACE_ROOT"
+
 # Durable receipt so sessions can diagnose build-time state without
 # parsing logs. coo-identity-digest surfaces this in the SessionStart
 # digest block.
