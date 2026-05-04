@@ -610,6 +610,90 @@ else
 fi
 _add E7 "$E7_ok" "$E7_detail"
 
+# E8: R2 ciphertext orphan detector (vade-runtime#217, MEMO 2026-05-04-mzeq).
+# Lists transcripts/<today>/ + transcripts/<yesterday>/ for ciphertexts
+# whose LastModified is within the last VADE_E8_WINDOW_H hours (default 24),
+# HEADs each one, and asserts the `vade-meta-json` user-metadata key is
+# present and JSON-parseable.
+#
+# Sibling to E6 (#201, absence detector) and E7 (#209, SHA-mismatch).
+# E8 catches the partial-export hazard: a ciphertext that lands without
+# its vade-meta-json sidecar metadata, leaving fetch + analyzer
+# pipelines unable to decrypt without the meta. vade-runtime#216
+# collapsed body+meta into one atomic PUT (object metadata via
+# `x-amz-meta-vade-meta-json`), making post-#216 orphans
+# structurally impossible — but per MEMO 2026-05-04-mzeq principle 2,
+# "closed" requires both a fix AND a continuous detector.
+#
+# The 3 pre-#216 orphans (session_ids 8b2913a0, 2a6cb65a, b43eda2e
+# from 2026-05-03) are excluded by the (cutoff + allowlist) combination
+# inside the probe — keys whose LastModified < VADE_E8_PRE_FIX_CUTOFF
+# AND whose key contains one of the allowlisted session_ids never
+# count as orphans.
+#
+# Cost: 2 LISTs + N HEADs per boot, N = ciphertexts in window
+# (~1–10 in normal use). Skips when R2 creds missing, uv missing,
+# timeout missing, or CI fake-env active. Live-only invariant.
+#
+# Tunable via env: VADE_E8_WINDOW_H (default 24),
+# VADE_E8_PRE_FIX_CUTOFF (default 2026-05-04T07:30:00Z).
+E8_ok=skip
+E8_detail="prerequisites missing"
+E8_WINDOW_H="${VADE_E8_WINDOW_H:-24}"
+E8_PRE_FIX_CUTOFF="${VADE_E8_PRE_FIX_CUTOFF:-2026-05-04T07:30:00+00:00}"
+if [ -n "${VADE_CI_WORKSPACE_ROOT:-}" ] || [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+  E8_ok=skip
+  E8_detail="skipped in CI fake-env (VADE_CI_WORKSPACE_ROOT or VADE_BINDIR_OVERRIDE set); live-only probe"
+elif [ -z "${R2_TRANSCRIPTS_ACCESS_KEY_ID:-}" ] || [ -z "${R2_TRANSCRIPTS_SECRET_ACCESS_KEY:-}" ]; then
+  E8_ok=skip
+  E8_detail="R2_TRANSCRIPTS_{ACCESS,SECRET}_KEY missing in env (live probe needs creds)"
+elif ! check_cmd uv; then
+  E8_ok=skip
+  E8_detail="uv missing (required for boto3 probe)"
+elif ! check_cmd timeout; then
+  E8_ok=skip
+  E8_detail="timeout missing (cannot bound probe)"
+else
+  E8_probe_script="$SCRIPT_DIR/integrity-check-e8-r2-orphan.py"
+  if [ ! -x "$E8_probe_script" ]; then
+    E8_ok=skip
+    E8_detail="probe script not executable: $E8_probe_script"
+  else
+    E8_out="$(timeout 30 "$E8_probe_script" \
+      --window-h "$E8_WINDOW_H" \
+      --pre-fix-cutoff "$E8_PRE_FIX_CUTOFF" \
+      2>/dev/null || echo '')"
+    if [ -z "$E8_out" ]; then
+      E8_ok=false
+      E8_detail="probe produced no output (timeout, missing uv, or process error)"
+    elif check_cmd node; then
+      # Parse the probe's JSON output. node is part of the integrity
+      # check's standing dependency surface (see Group A), so this
+      # path is the canonical one.
+      E8_parsed="$(printf '%s' "$E8_out" | node -e '
+        let d = "";
+        process.stdin.on("data", c => d += c);
+        process.stdin.on("end", () => {
+          try {
+            const o = JSON.parse(d);
+            const ok = o.ok === true ? "true" : "false";
+            const detail = (o.detail || "").replace(/[|\n\r]/g, " ");
+            process.stdout.write(ok + "|" + detail);
+          } catch {
+            process.stdout.write("false|probe output not JSON-parseable: " + d.slice(0, 160));
+          }
+        });
+      ' 2>/dev/null)"
+      IFS='|' read -r E8_ok E8_detail <<<"$E8_parsed"
+      [ -z "$E8_ok" ] && { E8_ok=false; E8_detail="probe parser produced empty verdict"; }
+    else
+      E8_ok=skip
+      E8_detail="node missing; cannot parse probe output"
+    fi
+  fi
+fi
+_add E8 "$E8_ok" "$E8_detail"
+
 # ── Group F: Culture-system substrate discipline ─────────────
 # Implements E1–E4 from coo/foundations/2026-04-22_we-can-claim-a-record.md
 # §5d (label delta: the essay calls these E1–E4; Group E is occupied by
