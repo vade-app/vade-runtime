@@ -78,6 +78,13 @@ ensure_gh_coo_wrap "$SCRIPT_DIR/gh-coo-wrap.sh"
 # would clobber the well-formed PATH coo-bootstrap captured at install time.
 # vade-runtime#171.
 merge_coo_settings_state_dir
+# Refresh the external-touch (F6) cache when it's older than 24h.
+# Build-time prewarm in cloud-setup.sh handles the fresh-snapshot case;
+# this catches snapshots resumed after the cache has gone stale and
+# session-resume environments where the build skipped the prewarm
+# (no PAT at build time, etc.). Fail-open: if gh/PAT missing or refresh
+# fails, F6 falls back to its own "cache absent" skip path.
+prewarm_external_touch_cache "$WORKSPACE_ROOT_DERIVED" 24
 # integrity-check.sh runs in coo-identity-digest.sh instead of here,
 # so the check fires after the platform's repo-sync has settled
 # (vade-runtime#XXX; moved from here to eliminate boot-time false alarms).

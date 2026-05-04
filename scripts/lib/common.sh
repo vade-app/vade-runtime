@@ -840,6 +840,74 @@ PREWARM_PY
   rm -f "$prewarm_script"
 }
 
+# Refresh the external-touch (F6) cache by invoking
+# vade-coo-memory/bin/external-touch.py --refresh-cache. Two callers:
+#
+#   1. cloud-setup.sh after coo-bootstrap → builds the cache into the
+#      snapshot so F6 reports ok on the first session of a fresh
+#      container (rather than skipping with "cache absent — refresh via
+#      bin/external-touch.py" until manually run).
+#   2. session-start-sync.sh → refreshes if the cache is older than
+#      $2 hours, catching long-running snapshots whose baked-in cache
+#      has gone stale.
+#
+# Args: $1 workspace_root (e.g., /home/user); $2 max_age_hours (optional —
+# refresh only if the cache is older than this; omit to always refresh).
+#
+# Fail-open on every gate (gh missing, PAT missing, script absent, refresh
+# fails) so a degraded snapshot doesn't block boot. Non-zero exits log a
+# WARN; F6 will fall back to its own "cache absent" skip path.
+prewarm_external_touch_cache() {
+  local workspace_root="${1:-}"
+  local max_age_hours="${2:-}"
+  if [ -z "$workspace_root" ]; then
+    build_log_record WARN "external-touch: prewarm called without workspace_root; skipping"
+    return 0
+  fi
+  local script="$workspace_root/vade-coo-memory/bin/external-touch.py"
+  local cache_path="${VADE_EXTERNAL_TOUCH_CACHE:-$VADE_CLOUD_STATE_DIR/external-touch-cache.json}"
+
+  if [ ! -f "$script" ]; then
+    build_log_record WARN "external-touch: $script absent; F6 cache pre-warm skipped"
+    return 0
+  fi
+  if ! check_cmd python3 || ! check_cmd gh; then
+    build_log_record WARN "external-touch: python3/gh missing; F6 cache pre-warm skipped"
+    return 0
+  fi
+  # Need either an exported PAT (build-time after coo-bootstrap; or
+  # session-start with coo-env autosourced) or an interactively-authed gh.
+  if [ -z "${GITHUB_MCP_PAT:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}" ] \
+      && ! gh auth status >/dev/null 2>&1; then
+    build_log_record WARN "external-touch: no gh auth; F6 cache pre-warm skipped"
+    return 0
+  fi
+
+  # Freshness gate — only when max_age_hours is given. mtime comparison
+  # is portable across GNU/BSD stat by trying both flags.
+  if [ -n "$max_age_hours" ] && [ -f "$cache_path" ]; then
+    local cache_mtime now_secs age_hours
+    cache_mtime=$(stat -c %Y "$cache_path" 2>/dev/null \
+                || stat -f %m "$cache_path" 2>/dev/null \
+                || echo 0)
+    now_secs=$(date +%s)
+    age_hours=$(( (now_secs - cache_mtime) / 3600 ))
+    if [ "$age_hours" -lt "$max_age_hours" ] 2>/dev/null; then
+      build_log_record OK "external-touch: cache age ${age_hours}h < ${max_age_hours}h floor; refresh skipped"
+      return 0
+    fi
+  fi
+
+  mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || true
+  if GH_TOKEN="${GITHUB_MCP_PAT:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}" \
+      python3 "$script" --refresh-cache "$cache_path" >/dev/null 2>>"$VADE_BUILD_LOG"; then
+    build_log_record OK "external-touch: cache pre-warmed at $cache_path"
+  else
+    build_log_record WARN "external-touch: cache pre-warm failed; F6 will skip on next session"
+  fi
+  return 0
+}
+
 ensure_op_cli() {
   # Install into a snapshot-persistent path so a build-time install is
   # still on disk at session-resume time. /root/ resets each resume in
