@@ -913,6 +913,55 @@ else
   _add F4 skip "requires coo-memory repo at $F_REPO with .git"
 fi
 
+# ── F5 — Voice-density on post-cutoff foundations essays ─────
+# Stage 1 of disposition-proposal §5 F4 (substrate-capture pole), per
+# MEMO-2026-04-29-74vf (voice-drain register failure mode + voice-density
+# verification dimension). Runs bin/voice-density.py on each non-companion
+# foundations essay and fires when any falls below the calibrated floor
+# (default 6.0 carriers/1000 from the auto-detectable subset; baseline
+# observed min 6.92 per coo/instruments/voice-density.md §4).
+#
+# Numbering note: integrity-check.sh F1-F4 are PR-citation, memo-retirement,
+# essay-companion, attribution-coverage. F5 extends the script's F-series
+# numerically; the disposition-proposal F1-F7 audit poles are a SEPARATE
+# numbering axis. F5 here implements pole F4's sub-condition 1. Stages 2-4
+# of vade-coo-memory#429 will add further slots covering the remaining
+# sub-conditions (section-positioning, fresh-boot reading-test, F5 dark-
+# accumulation metrics).
+#
+# Signal-shape, not gate-shape: a fired F5 means "investigate drift,"
+# not "block." Disposition-proposal §6 names gate-shape watchdogs as
+# themselves a substrate-capture vector; F5 honors that explicitly.
+#
+# Floor revisable by env: VADE_VOICE_DENSITY_FLOOR.
+F5_SCRIPT="$F_REPO/bin/voice-density.py"
+F5_FLOOR="${VADE_VOICE_DENSITY_FLOOR:-6.0}"
+if [ -f "$F5_SCRIPT" ] && [ -d "$F_REPO/coo/foundations" ] && check_cmd python3; then
+  f5_tmp_err=$(mktemp 2>/dev/null || echo "/tmp/vade-f5-$$.err")
+  f5_count=$(python3 "$F5_SCRIPT" --all "$F_REPO/coo/foundations" \
+    --exclude '*_transcript.md' \
+    --exclude '*_companion.md' \
+    --exclude '*-companion.md' \
+    --exclude '*_agent-reports*' \
+    --exclude 'README.md' \
+    --floor "$F5_FLOOR" 2>"$f5_tmp_err" \
+    | grep -c '^path:' || true)
+  f5_rc=${PIPESTATUS[0]}
+  if [ "$f5_rc" -eq 0 ]; then
+    _add F5 true "$f5_count post-cutoff essays meet voice-density floor $F5_FLOOR/1000 (auto subset)"
+  elif [ "$f5_rc" -eq 1 ]; then
+    f5_below=$(grep -E '^[[:space:]]+/' "$f5_tmp_err" 2>/dev/null \
+      | sed 's|^[[:space:]]*||;s|^.*/||;s|: .*||' \
+      | tr '\n' ',' | sed 's/,$//')
+    _add F5 false "voice-density below floor $F5_FLOOR/1000 (auto subset): ${f5_below:-unknown}"
+  else
+    _add F5 skip "voice-density.py exited rc=$f5_rc"
+  fi
+  rm -f "$f5_tmp_err"
+else
+  _add F5 skip "requires $F_REPO/bin/voice-density.py + coo/foundations + python3"
+fi
+
 # ── Serialize ────────────────────────────────────────────────
 mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || true
 
