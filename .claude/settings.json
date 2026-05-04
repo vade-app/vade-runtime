@@ -256,7 +256,13 @@
       "Read(//Users/venpopov/GitHub/vade-app/**)",
       "mcp__github-coo__get_me",
       "Bash(mkdir -p /root/.claude/plans)",
-      "Read(//root/.claude/plans/**)"
+      "Read(//root/.claude/plans/**)",
+      "Bash(bash /Users/vepopo/GitHub/vade-app/vade-runtime/scripts/local-setup.sh)",
+      "Bash(gh project:*)",
+      "Bash(git -C /Users/vepopo/GitHub/VADE/repos/vade-coo-memory mv coo/project_tracker.md coo/_archive/project_tracker.md)",
+      "Bash(git commit -m 'Step 9 Phase 2 sentinel: code-origin ping:*)",
+      "Bash(node -e 'const s=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/vepopo/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"enabledPlugins:\", s.enabledPlugins, \"autoMemoryEnabled:\", s.autoMemoryEnabled, \"defaultMode:\", s.permissions?.defaultMode\\)')",
+      "Bash(node -e 'const s=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/vepopo/GitHub/vade-app/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"SessionStart chains:\", s.hooks?.SessionStart?.length\\)')"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
