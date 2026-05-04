@@ -1,0 +1,289 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["boto3>=1.34,<2"]
+# ///
+"""
+integrity-check-e6-r2-absence.py — R2 transcript-absence alarm.
+
+Sibling to:
+  - integrity-check-e7-r2-sha.py (#209) — SHA-mismatch detection.
+  - integrity-check-e8-r2-orphan.py (#217) — partial-export (orphan meta).
+
+E6 catches **total-loss-of-export**: local Claude Code session jsonls
+exist under ~/.claude/projects within the last window, but R2 has zero
+objects in the matching date prefixes. That is the failure mode of
+vade-runtime#181 (agent-teams SIGKILL, 48h outage 2026-04-29 → 04-30)
+and vade-runtime#198 (recurrence). Both went undetected for ~24h
+because the only signal was the next nightly run finding no R2 objects.
+
+E6 turns that signal into a boot-time invariant. Post-vade-runtime#216
+the partial-export hazard is structurally impossible (E8 covers the
+residual), but the *absence* hazard — hook never runs at all because
+of a future container-teardown bug, env-var rename, or settings.json
+regression — remains until detected. Per MEMO-2026-05-04-mzeq
+principle 2, "closed" requires both a fix AND a continuous detector.
+
+Pipeline:
+  1. Count *.jsonl files under PROJECTS_DIR (default ~/.claude/projects)
+     whose mtime is within the last VADE_E6_WINDOW_H hours (default 24).
+  2. If zero — skip cleanly. No upstream sessions to alarm on.
+  3. Otherwise: list R2 objects under transcripts/<today>/ and
+     transcripts/<yesterday>/ (UTC date partitions); count those whose
+     LastModified is within the same window.
+  4. If R2 count == 0 while local count > 0 — orphan-pipeline alarm.
+     Otherwise — ok with summary.
+
+Output: a single JSON object on stdout
+    {"ok": bool, "local_count": int, "r2_count": int, "detail": str}
+Plus a one-line human summary on stderr.
+
+Exits 0 always — the wrapper interprets `ok`. The wrapper also fences
+on R2 creds + uv + timeout availability.
+
+vade-runtime#201 — E6 boot-time integrity invariant.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+def _stderr(msg: str) -> None:
+    sys.stderr.write(f"[integrity-check-e6] {msg}\n")
+
+
+def _emit(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload) + "\n")
+    sys.stdout.flush()
+
+
+def _op_read(ref: str) -> str:
+    """Read a 1Password ref via `op` CLI; return empty string on miss.
+
+    Mirror of integrity-check-e8-r2-orphan.py — the R2 endpoint and
+    bucket are stored in 1Password rather than env so they can rotate
+    without a settings.json patch.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("op"):
+        return ""
+    try:
+        out = subprocess.run(
+            ["op", "read", ref],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return out.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _r2_client(endpoint: str, access: str, secret: str):
+    """Build an R2 boto3 client. Mirror of E8 + transcript-fetch.py."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access,
+        aws_secret_access_key=secret,
+        region_name="auto",
+        config=Config(
+            signature_version="s3v4",
+            retries={"max_attempts": 2, "mode": "standard"},
+        ),
+    )
+
+
+def _date_prefixes(now: datetime) -> list[str]:
+    """Return today's and yesterday's R2 prefixes in UTC."""
+    today = now.strftime("transcripts/%Y/%m/%d/")
+    yesterday = (now - timedelta(days=1)).strftime("transcripts/%Y/%m/%d/")
+    return list(dict.fromkeys([yesterday, today]))
+
+
+def _count_local_jsonls(projects_dir: Path, window_start: datetime) -> int:
+    """Count *.jsonl under projects_dir with mtime >= window_start."""
+    count = 0
+    if not projects_dir.is_dir():
+        return 0
+    cutoff_ts = window_start.timestamp()
+    for path in projects_dir.rglob("*.jsonl"):
+        try:
+            if path.stat().st_mtime >= cutoff_ts:
+                count += 1
+        except OSError:
+            continue
+    return count
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--window-h",
+        type=int,
+        default=int(os.environ.get("VADE_E6_WINDOW_H", "24")),
+        help="Window in hours for both the local jsonl mtime filter and "
+        "the R2 LastModified filter. Default 24 (also via VADE_E6_WINDOW_H).",
+    )
+    ap.add_argument(
+        "--projects-dir",
+        default=os.environ.get(
+            "VADE_E6_PROJECTS_DIR", str(Path.home() / ".claude" / "projects")
+        ),
+        help="Path to the Claude Code per-project jsonl tree. Default "
+        "~/.claude/projects (also via VADE_E6_PROJECTS_DIR).",
+    )
+    ap.add_argument("--verbose", action="store_true", help="Per-row detail to stderr.")
+    args = ap.parse_args()
+
+    access = os.environ.get("R2_TRANSCRIPTS_ACCESS_KEY_ID", "").strip()
+    secret = os.environ.get("R2_TRANSCRIPTS_SECRET_ACCESS_KEY", "").strip()
+    if not access or not secret:
+        _emit(
+            {
+                "ok": True,
+                "local_count": 0,
+                "r2_count": 0,
+                "detail": "skip: R2_TRANSCRIPTS_{ACCESS,SECRET}_KEY missing",
+            }
+        )
+        return 0
+
+    projects_dir = Path(args.projects_dir)
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=args.window_h)
+
+    local_count = _count_local_jsonls(projects_dir, window_start)
+    if args.verbose:
+        _stderr(
+            f"local jsonls in last {args.window_h}h under {projects_dir}: "
+            f"{local_count}"
+        )
+
+    if local_count == 0:
+        detail = (
+            f"no recent jsonls under {projects_dir} in last {args.window_h}h; "
+            f"nothing to alarm on"
+        )
+        _emit(
+            {
+                "ok": True,
+                "local_count": 0,
+                "r2_count": 0,
+                "detail": detail,
+            }
+        )
+        return 0
+
+    endpoint = _op_read("op://COO/r2-transcripts/endpoint")
+    bucket = _op_read("op://COO/r2-transcripts/bucket")
+    if not endpoint or not bucket:
+        _emit(
+            {
+                "ok": True,
+                "local_count": local_count,
+                "r2_count": 0,
+                "detail": "skip: op://COO/r2-transcripts/{endpoint,bucket} not readable",
+            }
+        )
+        return 0
+
+    try:
+        import boto3  # noqa: F401  (imported for side-effect of asserting availability)
+        from botocore.exceptions import ClientError
+    except ImportError as e:
+        _emit(
+            {
+                "ok": False,
+                "local_count": local_count,
+                "r2_count": 0,
+                "detail": f"boto3 import failed: {e}",
+            }
+        )
+        return 0
+
+    s3 = _r2_client(endpoint, access, secret)
+    prefixes = _date_prefixes(now)
+
+    r2_count = 0
+    for prefix in prefixes:
+        try:
+            for page in s3.get_paginator("list_objects_v2").paginate(
+                Bucket=bucket, Prefix=prefix
+            ):
+                for obj in page.get("Contents", []):
+                    key = obj["Key"]
+                    if not key.endswith(".jsonl.gz.age"):
+                        continue
+                    last_modified = obj["LastModified"]
+                    if last_modified < window_start:
+                        continue
+                    r2_count += 1
+                    if args.verbose:
+                        _stderr(
+                            f"R2 {key} (LastModified={last_modified.isoformat()})"
+                        )
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "unknown")
+            _stderr(f"list_objects_v2 ClientError on {prefix}: {code}")
+            # Soft-fail: a transient list error shouldn't false-fire E6
+            # in the wrapper. Report degraded with detail so it's visible
+            # but don't claim r2_count we can't verify.
+            _emit(
+                {
+                    "ok": False,
+                    "local_count": local_count,
+                    "r2_count": 0,
+                    "detail": f"list_objects_v2 failed on prefix {prefix}: {code}",
+                }
+            )
+            return 0
+
+    if r2_count == 0:
+        detail = (
+            f"{local_count} local jsonls in last {args.window_h}h under "
+            f"{projects_dir} but R2 has 0 objects (prefixes: "
+            f"{','.join(prefixes)}) — transcript-export pipeline silent; "
+            f"see vade-runtime#201, MEMO-2026-05-04-mzeq"
+        )
+        _emit(
+            {
+                "ok": False,
+                "local_count": local_count,
+                "r2_count": 0,
+                "detail": detail,
+            }
+        )
+        _stderr(detail)
+        return 0
+
+    detail = (
+        f"{r2_count} R2 ciphertexts and {local_count} local jsonls in last "
+        f"{args.window_h}h (prefixes: {','.join(prefixes)}); pipeline live"
+    )
+    _emit(
+        {
+            "ok": True,
+            "local_count": local_count,
+            "r2_count": r2_count,
+            "detail": detail,
+        }
+    )
+    if args.verbose:
+        _stderr(detail)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
