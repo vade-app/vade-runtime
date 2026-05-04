@@ -6,13 +6,14 @@
 """
 transcript-meta-backfill.py — vade-coo-memory#243.
 
-Stub-meta generator. The Stop hook (session-end-transcript-export.py)
+Real-meta-or-stub generator. The Stop hook (session-end-transcript-export.py)
 writes <id>.meta.json locally but doesn't commit it; until vade-runtime#148
 Part A lands and is reliable, sessions can leave R2 ciphertext orphaned
 from any sidecar in the agent-logs working tree. This script enumerates
 R2 directly, finds session_ids without a sibling meta.json in
-vade-agent-logs/transcripts/<date>/, and drops a stub <id>.meta.json
-that the transcript-analyzer agent accepts.
+vade-agent-logs/transcripts/<date>/, and writes a meta.json — using the
+real meta embedded as R2 object-metadata when present (this PR), falling
+back to a stub when not.
 
 Pipeline per session_id:
   1. boto3 list_objects_v2 against the configured R2 prefix.
@@ -20,9 +21,13 @@ Pipeline per session_id:
      - If the agent-logs working tree already holds a real meta.json
        at the same date-path, skip.
      - If a stub meta.json already exists (carrying _stub: true), skip.
-     - Otherwise download the ciphertext to a temp file, compute
-       sha256, write a stub meta.json with the fields the analyzer
-       reads.
+     - head_object on the ciphertext: if `x-amz-meta-vade-meta-json`
+       is present (export hook PRs since this one), parse and write
+       the REAL meta with `_recovered_from_object_metadata: true`.
+       Skip SHA recompute — the embedded ciphertext_sha256 is canonical.
+     - Otherwise download the ciphertext, compute sha256, write a
+       stub meta.json with the fields the analyzer reads (legacy path
+       for sessions written before object-metadata embedding shipped).
 
 The stub is intentionally shallow — the analyzer doesn't need
 events_processed or bytes_post_redaction; it computes those itself
@@ -280,6 +285,65 @@ def _write_stub(
     return sidecar_path
 
 
+def _try_recover_real_meta_from_object_metadata(
+    s3, bucket: str, key: str
+) -> tuple[dict | None, str | None]:
+    """HEAD the ciphertext key; if the export hook embedded the full
+    meta as `x-amz-meta-vade-meta-json` (this PR), parse and return it.
+
+    Returns (sidecar_dict, truncation_marker) on success, (None, None)
+    when the metadata header is absent (legacy session). Raises only
+    on non-recoverable parse errors so the caller can fall through to
+    the stub path on missing-metadata, vs. surfacing on corruption.
+
+    R2/S3 lowercases user-metadata keys on read.
+    """
+    head = s3.head_object(Bucket=bucket, Key=key)
+    metadata = head.get("Metadata") or {}
+    encoded = metadata.get("vade-meta-json")
+    if not encoded:
+        return None, None
+    sidecar = json.loads(encoded)  # let JSONDecodeError propagate
+    truncated = metadata.get("vade-meta-truncated")
+    return sidecar, truncated
+
+
+def _write_recovered(
+    sidecar_dir: Path,
+    session_id: str,
+    sidecar: dict,
+    truncated: str | None,
+) -> Path:
+    """Write a recovered-from-object-metadata sidecar to disk.
+
+    Adds two forensic markers:
+      - `_recovered_from_object_metadata: true`
+      - `_object_metadata_truncated: <field>` when the export hook
+        dropped a field to fit the 2 KB user-metadata cap.
+
+    The dict is otherwise byte-identical to what the export hook would
+    have written to flat-key + local sidecar — this is the REAL meta,
+    not a stub. Distinguished from `_stub: true` for downstream forensics.
+    """
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    sidecar_path = sidecar_dir / f"{session_id}.meta.json"
+    enriched = dict(sidecar)
+    enriched["_recovered_from_object_metadata"] = True
+    if truncated:
+        enriched["_object_metadata_truncated"] = truncated
+        # Synthesize the dropped field as an empty container so the
+        # analyzer doesn't trip over a missing key.
+        enriched.setdefault(
+            truncated, {} if truncated == "redaction_hits" else None
+        )
+    enriched["recovered_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    enriched["recovery_source"] = "vade-runtime/scripts/lib/transcript-meta-backfill.py"
+    with open(sidecar_path, "w") as f:
+        json.dump(enriched, f, indent=2)
+        f.write("\n")
+    return sidecar_path
+
+
 def _backfill_one(
     entry: dict,
     date_path: str,
@@ -295,8 +359,39 @@ def _backfill_one(
     if skip:
         return f"SKIP {date_path}/{session_id} ({reason})"
 
+    # Tier 1 (this PR): try to recover the REAL meta from R2 object
+    # metadata embedded by the export hook on the ciphertext PUT.
+    # When present, this is byte-identical to what the export hook
+    # would have written — preferred over stub generation, which loses
+    # all the runtime telemetry (events_processed, bytes_*, redaction_hits).
+    try:
+        recovered, truncated = _try_recover_real_meta_from_object_metadata(
+            s3, bucket, entry["key"]
+        )
+    except json.JSONDecodeError as e:
+        return (
+            f"FAIL {date_path}/{session_id} "
+            f"object-metadata vade-meta-json unparseable: {e!r}"
+        )
+    if recovered is not None:
+        if dry_run:
+            return (
+                f"DRY  {date_path}/{session_id} "
+                "would write REAL meta from object-metadata"
+                + (f" (truncated: {truncated})" if truncated else "")
+            )
+        sidecar = _write_recovered(sidecar_dir, session_id, recovered, truncated)
+        return f"WROTE {date_path}/{session_id} ({sidecar}) [recovered from object-metadata]"
+
+    # Tier 2 (legacy): no embedded meta — generate a stub from the
+    # ciphertext bytes. Sessions written before object-metadata
+    # embedding shipped, or sessions whose meta exceeded the 2 KB cap
+    # entirely.
     if dry_run:
-        return f"DRY  {date_path}/{session_id} would write stub ({entry['size']} bytes)"
+        return (
+            f"DRY  {date_path}/{session_id} "
+            f"would write stub ({entry['size']} bytes; no object-metadata)"
+        )
 
     with tempfile.TemporaryDirectory(prefix=f"meta-backfill-{session_id}-") as tmp:
         ciphertext = Path(tmp) / f"{session_id}.jsonl.gz.age"
@@ -314,7 +409,7 @@ def _backfill_one(
         sha,
         entry["last_modified"],
     )
-    return f"WROTE {date_path}/{session_id} ({sidecar})"
+    return f"WROTE {date_path}/{session_id} ({sidecar}) [stub]"
 
 
 def main(argv: list[str]) -> int:

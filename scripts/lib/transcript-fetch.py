@@ -23,11 +23,14 @@ Usage:
 Meta resolution order (when --meta is omitted):
   1. vade-agent-logs/transcripts/**/<id>.meta.json walk (fast local path).
   2. R2 GetObject at transcripts/meta/<id>.meta.json (vade-runtime#207
-     fix shape (b), 2026-05-03 — R2 is the canonical durable record;
-     the vade-agent-logs copy is best-effort secondary). The walk
-     misses for any session whose auto-PR chain failed (the original
-     #207 symptom), so the R2 fallback is what makes meta-asymmetric
-     sessions readable.
+     fix shape (b), 2026-05-03 — flat-key fast-resolve index;
+     best-effort secondary post-this-PR).
+  3. R2 list_objects_v2 + head_object on the ciphertext: parse the
+     embedded `x-amz-meta-vade-meta-json` user-metadata value
+     (this PR — atomic body+meta single-PUT eliminates the cross-PUT
+     SIGKILL window that left tier 2 sessions orphaned in
+     2026-05-03 round-2 verification). Slower (one list + one head)
+     but always works for any session whose ciphertext landed.
 
 The decrypted jsonl is written to a per-invocation temp file under
 $HOME/.vade/transcript-cache/. Callers should `--cleanup` it when
@@ -167,16 +170,83 @@ def _r2_download(bucket: str, key: str, endpoint: str, dst: Path) -> None:
     s3.download_file(bucket, key, str(dst))
 
 
+def _find_ciphertext_key_by_session_id(s3, bucket: str, session_id: str) -> str | None:
+    """List `transcripts/` and return the first ciphertext key whose
+    filename matches `<session_id>.jsonl.gz.age`. Returns None if no
+    such key exists.
+
+    Used by the object-metadata fallback tier (this PR). Bucket
+    lifecycle keeps the listed surface bounded; if it grows we can
+    add a `--window-days` bound by walking date prefixes instead.
+    """
+    suffix = f"/{session_id}.jsonl.gz.age"
+    for page in s3.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix="transcripts/"
+    ):
+        for obj in page.get("Contents", []):
+            if obj["Key"].endswith(suffix):
+                return obj["Key"]
+    return None
+
+
+def _fetch_meta_from_r2_object_metadata(
+    s3, bucket: str, session_id: str
+) -> dict | None:
+    """Tier 3: list R2 for the ciphertext, head_object, parse the
+    embedded `vade-meta-json` user-metadata value.
+
+    Returns parsed sidecar dict on success, None when no ciphertext
+    exists for `session_id` or no embedded meta is present (caller
+    raises FileNotFoundError after exhausting all tiers).
+
+    R2/S3 lowercases user-metadata keys on read, so we look up the
+    lowercase form. If the export script truncated `redaction_hits`
+    to fit the 2 KB user-metadata cap, the marker key
+    `vade-meta-truncated` carries the dropped field name.
+    """
+    ciphertext_key = _find_ciphertext_key_by_session_id(s3, bucket, session_id)
+    if not ciphertext_key:
+        return None
+    head = s3.head_object(Bucket=bucket, Key=ciphertext_key)
+    metadata = head.get("Metadata") or {}
+    encoded = metadata.get("vade-meta-json")
+    if not encoded:
+        return None
+    try:
+        sidecar = json.loads(encoded)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"R2 object-metadata vade-meta-json on {ciphertext_key} "
+            f"is not valid JSON: {e!r}"
+        ) from e
+    truncated = metadata.get("vade-meta-truncated")
+    if truncated:
+        # Synthesize the dropped field as empty so downstream consumers
+        # don't blow up on KeyError. The flat-key + sidecar tiers carry
+        # the un-truncated copy if the operator needs full data.
+        sidecar.setdefault(truncated, {} if truncated == "redaction_hits" else None)
+        sidecar["_object_metadata_truncated"] = truncated
+    sidecar["_recovered_from_object_metadata"] = True
+    return sidecar
+
+
 def _fetch_meta_from_r2(session_id: str) -> dict:
     """Resolve meta.json for `session_id` directly from R2.
 
-    Used as a fallback when vade-agent-logs lookup fails. Post-#207 fix
-    shape (b): the R2 meta at `transcripts/meta/<id>.meta.json` is the
-    canonical durable record; the vade-agent-logs copy is best-effort
-    secondary for GitHub browsing. Sessions whose auto-PR chain failed
-    have R2 meta but no vade-agent-logs file.
+    Two tiers (vade-agent-logs walk is upstream of this function):
+      a. flat-key GET at `transcripts/meta/<id>.meta.json` — fast,
+         single GetObject; populated by the export hook's secondary
+         meta PUT (post-#215). Best-effort.
+      b. object-metadata HEAD on the ciphertext (this PR): list
+         `transcripts/` for the session's `.jsonl.gz.age`, head_object,
+         parse the embedded `vade-meta-json`. Slower (one list + one
+         head) but is the canonical durability path — the export hook
+         embeds meta on the ciphertext PUT itself, so any session whose
+         ciphertext landed has meta here regardless of whether tier (a)
+         succeeded.
 
-    Returns the parsed sidecar dict.
+    Returns the parsed sidecar dict; raises FileNotFoundError if
+    neither tier resolves.
     """
     endpoint = _op_read("op://COO/r2-transcripts/endpoint")
     bucket = _op_read("op://COO/r2-transcripts/bucket")
@@ -190,10 +260,21 @@ def _fetch_meta_from_r2(session_id: str) -> dict:
     s3 = _r2_client(endpoint)
     try:
         obj = s3.get_object(Bucket=bucket, Key=meta_key)
-    except Exception as e:
-        raise FileNotFoundError(
-            f"meta.json not on R2 at {meta_key!r}: {e!r}"
-        ) from e
+    except Exception as flatkey_err:
+        # Tier (a) miss — fall through to tier (b).
+        _stderr(
+            f"flat-key meta GET miss ({meta_key!r}); "
+            "falling through to object-metadata on the ciphertext"
+        )
+        sidecar = _fetch_meta_from_r2_object_metadata(s3, bucket, session_id)
+        if sidecar is None:
+            raise FileNotFoundError(
+                f"meta.json not resolvable for session_id={session_id} on R2: "
+                f"flat-key {meta_key!r} miss ({flatkey_err!r}); "
+                "no ciphertext with embedded vade-meta-json found either"
+            ) from flatkey_err
+        return sidecar
+
     body = obj["Body"].read()
     try:
         return json.loads(body.decode("utf-8"))

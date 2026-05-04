@@ -20,18 +20,23 @@ Pipeline per invocation:
      encryption per BDFL approval (vade-agent-logs#64 security review).
   6. boto3 upload to Cloudflare R2 at
      transcripts/YYYY/MM/DD/<id>.jsonl.gz.age (date from first event
-     timestamp, falling back to UTC-now).
+     timestamp, falling back to UTC-now). The meta.json dict is built
+     BEFORE this PUT and embedded as R2 user-metadata
+     (`x-amz-meta-vade-meta-json`) on the same call — body and meta
+     commit together in one atomic PUT (canonical durability layer
+     post-this-PR; closes the cross-PUT SIGKILL window that #215's
+     two-PUT layout left exposed).
   7. boto3 upload of meta.json to Cloudflare R2 at
-     transcripts/meta/<id>.meta.json (primary durability per
-     vade-runtime#207 fix shape (b), 2026-05-03). Flat-by-id key so
-     transcript-fetch can resolve meta from session_id alone without
-     needing the date hierarchy.
+     transcripts/meta/<id>.meta.json — best-effort secondary
+     fast-resolve index for transcript-fetch (avoids list+head_object
+     on the normal path). Failure here is recoverable via the embedded
+     object-metadata from step 6.
   8. Write a sidecar at <vade-agent-logs>/transcripts/YYYY/MM/DD/<id>.meta.json
      with parser_version, exported_at, event count, byte sizes,
      redaction hits, ciphertext sha256, and the R2 object keys.
      Best-effort secondary copy for GitHub-browsable history; failure
-     here no longer affects durability since R2 already holds the
-     canonical record from step 7.
+     here is recoverable via either step 6 (embedded) or step 7
+     (flat-key) — the meta is durable on R2 either way.
 
 Always exits 0. Any uncaught failure drops <id>.export-error.txt next
 to where the meta.json would have gone, so the absence of meta.json +
@@ -269,7 +274,31 @@ def _op_read(ref: str) -> str:
         return ""
 
 
-def _r2_upload(local: Path, key: str) -> dict:
+def _r2_endpoint_bucket() -> tuple[str, str]:
+    """Resolve R2 endpoint + bucket via `op` once.
+
+    Callers that PUT twice (ciphertext + flat-key meta) should resolve
+    once here and pass the values into `_r2_upload` to avoid duplicate
+    `op` invocations. Raises if either slot is empty.
+    """
+    endpoint = _op_read("op://COO/r2-transcripts/endpoint")
+    bucket = _op_read("op://COO/r2-transcripts/bucket")
+    if not endpoint or not bucket:
+        raise RuntimeError(
+            "R2 endpoint or bucket not readable from "
+            "op://COO/r2-transcripts/{endpoint,bucket}"
+        )
+    return endpoint, bucket
+
+
+def _r2_upload(
+    local: Path,
+    key: str,
+    *,
+    metadata: dict[str, str] | None = None,
+    endpoint: str | None = None,
+    bucket: str | None = None,
+) -> dict:
     """Upload a local file to R2 at the given key with first-write-wins
     semantics. Returns a dict with bucket+key+endpoint for the sidecar
     plus `ceded: bool` indicating whether another writer already held
@@ -287,6 +316,15 @@ def _r2_upload(local: Path, key: str) -> dict:
     Caller MUST check `ceded` before writing meta.json — a ceded
     writer's SHA does not match what's in R2 and writing it would
     re-create the mismatch this fix prevents.
+
+    `metadata` is the optional R2 user-metadata dict (`x-amz-meta-*`
+    headers, max 2 KB total, ASCII-only values). Body and metadata
+    commit together in one atomic PUT — used by the export pipeline
+    to embed meta.json on the ciphertext PUT, eliminating the
+    cross-PUT SIGKILL window that #215's two-PUT layout left exposed.
+    Orthogonal to `IfNoneMatch="*"`: the precondition is evaluated
+    server-side before commit, so a 412 cede leaves no metadata
+    behind either.
     """
     access_key = os.environ.get("R2_TRANSCRIPTS_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_TRANSCRIPTS_SECRET_ACCESS_KEY", "").strip()
@@ -295,12 +333,13 @@ def _r2_upload(local: Path, key: str) -> dict:
             "R2_TRANSCRIPTS_ACCESS_KEY_ID / R2_TRANSCRIPTS_SECRET_ACCESS_KEY "
             "missing — fetch_coo_secrets did not populate them"
         )
-    endpoint = _op_read("op://COO/r2-transcripts/endpoint")
-    bucket = _op_read("op://COO/r2-transcripts/bucket")
-    if not endpoint or not bucket:
-        raise RuntimeError(
-            "R2 endpoint or bucket not readable from "
-            "op://COO/r2-transcripts/{endpoint,bucket}"
+    if endpoint is None or bucket is None:
+        endpoint, bucket = _r2_endpoint_bucket()
+    if metadata is not None:
+        # R2 user-metadata is ISO-8859-1 string-only; ascii-encoded JSON
+        # caller-side keeps that constraint trivially.
+        assert all(isinstance(v, str) for v in metadata.values()), (
+            "R2 user-metadata values must be strings"
         )
 
     import boto3  # imported lazily — uv resolves on first run
@@ -319,14 +358,17 @@ def _r2_upload(local: Path, key: str) -> dict:
         ),
     )
 
+    put_kwargs = {
+        "Bucket": bucket,
+        "Key": key,
+        "IfNoneMatch": "*",
+    }
+    if metadata is not None:
+        put_kwargs["Metadata"] = metadata
+
     try:
         with open(local, "rb") as fin:
-            s3.put_object(
-                Bucket=bucket,
-                Key=key,
-                Body=fin,
-                IfNoneMatch="*",
-            )
+            s3.put_object(Body=fin, **put_kwargs)
         return {"bucket": bucket, "key": key, "endpoint": endpoint, "ceded": False}
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
@@ -335,6 +377,56 @@ def _r2_upload(local: Path, key: str) -> dict:
             _stderr(f"R2 PUT ceded (key exists, first-write-wins): {key}")
             return {"bucket": bucket, "key": key, "endpoint": endpoint, "ceded": True}
         raise
+
+
+def _encode_meta_for_object_metadata(sidecar: dict) -> dict[str, str] | None:
+    """Encode the meta sidecar dict for embedding as R2 object metadata.
+
+    Returns a dict suitable for `s3.put_object(Metadata=...)` — keys
+    are the `x-amz-meta-*` user-metadata names (R2 lowercases them on
+    read, so use lowercase here too), values are ASCII-only strings.
+
+    Atomic-PUT durability: the ciphertext body and these metadata
+    headers commit together in one HTTP request. This eliminates the
+    cross-PUT SIGKILL window that #215's two sequential PUTs (ciphertext
+    + flat-key meta.json) left exposed (round-2 verification 2026-05-03
+    16:43Z: ciphertext landed, meta did not, no breadcrumb).
+
+    Degradation ladder (R2 caps user-metadata at 2 KB total):
+      1. Full encode → if ≤ 1900 B (safe margin), return.
+      2. Drop `redaction_hits` (largest variable field) → retry; if
+         ≤ 1900 B, return with `vade-meta-truncated` marker.
+      3. Still too large → return None; caller skips the embed and
+         relies on the secondary flat-key + sidecar + auto-PR layers.
+    None is not a fatal error — the secondary layers carry full meta;
+    the atomicity guarantee only weakens for outlier sessions, leaving
+    behavior identical to today's for those.
+    """
+    LIMIT = 1900  # safe margin under R2's 2 KB user-metadata cap
+    SCHEMA = str(sidecar.get("schema_version", 2))
+
+    encoded = json.dumps(sidecar, separators=(",", ":"), ensure_ascii=True)
+    if len(encoded.encode("utf-8")) <= LIMIT:
+        return {"vade-meta-json": encoded, "vade-meta-schema": SCHEMA}
+
+    truncated = {k: v for k, v in sidecar.items() if k != "redaction_hits"}
+    encoded2 = json.dumps(truncated, separators=(",", ":"), ensure_ascii=True)
+    if len(encoded2.encode("utf-8")) <= LIMIT:
+        _stderr(
+            f"meta exceeded {LIMIT}B; dropped redaction_hits from object-metadata "
+            "(full meta still in flat-key + sidecar)"
+        )
+        return {
+            "vade-meta-json": encoded2,
+            "vade-meta-schema": SCHEMA,
+            "vade-meta-truncated": "redaction_hits",
+        }
+
+    _stderr(
+        f"meta still too large after dropping redaction_hits "
+        f"({len(encoded2.encode('utf-8'))}B > {LIMIT}B); skipping object-metadata embed"
+    )
+    return None
 
 
 def _emit_export_error(sidecar_dir: Path, session_id: str, exc: BaseException) -> None:
@@ -634,47 +726,33 @@ def main() -> int:
             ciphertext_size = ciphertext.stat().st_size
 
             r2_key = f"transcripts/{date_path}/{session_id}.jsonl.gz.age"
+            meta_r2_key = f"transcripts/meta/{session_id}.meta.json"
             dry_run = os.environ.get("VADE_TRANSCRIPT_EXPORT_DRY_RUN", "").strip() == "1"
+
+            # Pre-resolve R2 endpoint+bucket once so we can build the
+            # sidecar dict BEFORE the ciphertext PUT. The sidecar gets
+            # embedded as object metadata on the ciphertext PUT itself
+            # (this PR) — single atomic PUT eliminates the cross-PUT
+            # SIGKILL window that #215's two-PUT layout left exposed.
             if dry_run:
+                r2_endpoint = "<dry-run>"
+                r2_bucket = "<dry-run>"
                 r2_target = {
-                    "bucket": "<dry-run>",
+                    "bucket": r2_bucket,
                     "key": r2_key,
-                    "endpoint": "<dry-run>",
+                    "endpoint": r2_endpoint,
                     "uploaded": False,
+                    "meta_key": meta_r2_key,
                 }
             else:
-                upload = _r2_upload(ciphertext, r2_key)
-                # First-write-wins cede (vade-runtime#204): another writer
-                # already holds this R2 key. Our ciphertext_sha256 does NOT
-                # match what's in R2 — writing meta.json with our SHA would
-                # re-create the mismatch this fix prevents. Drop a
-                # breadcrumb so operators can trace which session ceded,
-                # then exit cleanly without writing the sidecar or
-                # opening the auto-PR. The canonical writer's meta.json
-                # (or transcript-meta-backfill.py's stub) wins.
-                if upload.get("ceded"):
-                    _emit_meta_pr_error(
-                        sidecar_dir,
-                        session_id,
-                        f"R2 PUT ceded to first writer (key={r2_key}); skipped meta.json write",
-                    )
-                    return 0
-                # Strip the transient `ceded` flag so meta.json schema stays
-                # clean — only the canonical-writer path reaches here, so
-                # `ceded` is always False.
+                r2_endpoint, r2_bucket = _r2_endpoint_bucket()
                 r2_target = {
-                    k: v for k, v in upload.items() if k != "ceded"
+                    "bucket": r2_bucket,
+                    "key": r2_key,
+                    "endpoint": r2_endpoint,
+                    "uploaded": True,  # optimistic; cede branch returns 0 below
+                    "meta_key": meta_r2_key,
                 }
-                r2_target["uploaded"] = True
-
-            # Flat-by-id meta key on R2 (vade-runtime#207 fix shape (b),
-            # 2026-05-03): transcript-fetch resolves meta from session_id
-            # alone without needing the date hierarchy, so this prefix is
-            # NOT colocated with the date-organized ciphertext. Both keys
-            # are recorded in r2_target so backfill / forensic tooling can
-            # navigate either direction.
-            meta_r2_key = f"transcripts/meta/{session_id}.meta.json"
-            r2_target["meta_key"] = meta_r2_key
 
             sidecar = {
                 "schema_version": 2,
@@ -696,23 +774,58 @@ def main() -> int:
                 "age_recipient_pubkey": _read_recipient_pubkey(),
             }
 
-            # R2 PUT(meta) — primary durability for vade-runtime#207. The
-            # auto-PR git-push chain races container teardown and silently
-            # SIGKILLs mid-pipeline; R2 is the only durable surface that
-            # survives the kill window between ciphertext upload and
-            # session-end. By staging meta to R2 here, before the
-            # vade-agent-logs git operations, we guarantee that any
-            # session whose ciphertext landed also has its meta — without
-            # depending on git-push, gh-pr-create, or container survival.
-            # The local file write + auto-PR below remain best-effort
-            # secondary for GitHub-browsable history.
+            # Atomic ciphertext PUT carrying meta as R2 object metadata.
+            # One HTTP request, one SIGKILL window: body and meta commit
+            # together or not at all. This collapses the prior two-PUT
+            # layout (#215) whose ~100-500ms inter-PUT gap was apparently
+            # still inside the container-teardown SIGKILL window
+            # (round-2 verification 2026-05-03T16:43Z: ciphertext landed,
+            # meta did not, no breadcrumb).
+            #
+            # The flat-key meta PUT and local sidecar below remain as
+            # best-effort secondary indexing layers (fast-resolve for
+            # transcript-fetch + GitHub-browsable history); failures
+            # there are recoverable via the embedded object-metadata.
+            embed_metadata = (
+                _encode_meta_for_object_metadata(sidecar) if not dry_run else None
+            )
+
+            if not dry_run:
+                upload = _r2_upload(
+                    ciphertext, r2_key,
+                    metadata=embed_metadata,
+                    endpoint=r2_endpoint, bucket=r2_bucket,
+                )
+                # First-write-wins cede (vade-runtime#204): another writer
+                # already holds this R2 key. Our ciphertext_sha256 does NOT
+                # match what's in R2 — writing meta.json with our SHA would
+                # re-create the mismatch this fix prevents. Drop a
+                # breadcrumb so operators can trace which session ceded,
+                # then exit cleanly without writing the sidecar or
+                # opening the auto-PR. The canonical writer's meta
+                # (in their object-metadata + flat-key) wins.
+                if upload.get("ceded"):
+                    _emit_meta_pr_error(
+                        sidecar_dir,
+                        session_id,
+                        f"R2 PUT ceded to first writer (key={r2_key}); skipped meta.json write",
+                    )
+                    return 0
+
+            # Best-effort secondary: flat-key meta PUT (fast-resolve index
+            # for transcript-fetch.py — avoids list+head_object on the
+            # normal path). If this fails, fetch falls through to the
+            # object-metadata tier on the ciphertext key.
             meta_temp = tmp_path / f"{session_id}.meta.json"
             meta_temp.write_text(json.dumps(sidecar, indent=2) + "\n")
             if dry_run:
                 _stderr(f"R2 meta PUT skipped (DRY_RUN=1): would write to {meta_r2_key}")
             else:
                 try:
-                    meta_upload = _r2_upload(meta_temp, meta_r2_key)
+                    meta_upload = _r2_upload(
+                        meta_temp, meta_r2_key,
+                        endpoint=r2_endpoint, bucket=r2_bucket,
+                    )
                     if meta_upload.get("ceded"):
                         _stderr(
                             f"R2 meta PUT ceded (idempotent re-fire): key={meta_r2_key}"
@@ -720,19 +833,20 @@ def main() -> int:
                     else:
                         _stderr(f"wrote R2 meta: {meta_r2_key}")
                 except BaseException as e:
-                    # Best-effort: meta R2 PUT failure doesn't block; the
-                    # local file write + auto-PR chain remain as fallback.
-                    # Drop a durable breadcrumb so operators can detect the
-                    # primary-durability path failed (the local fallback
-                    # may still succeed and mask the issue otherwise).
+                    # Best-effort: flat-key meta PUT failure doesn't
+                    # block; the embedded object-metadata on the
+                    # ciphertext PUT is the canonical durability layer.
+                    # Drop a breadcrumb for operator visibility; absence
+                    # of meta in flat-key + presence of object-metadata
+                    # is recoverable via the fetch fallback chain.
                     _stderr(
                         f"R2 meta PUT failed: {e!r} "
-                        "(best-effort; falling through to local + auto-PR)"
+                        "(best-effort secondary; object-metadata is canonical)"
                     )
                     _emit_meta_pr_error(
                         sidecar_dir,
                         session_id,
-                        f"R2 meta PUT failed: {e!r}",
+                        f"R2 meta PUT (flat-key secondary) failed: {e!r}",
                     )
 
             sidecar_path = sidecar_dir / f"{session_id}.meta.json"
