@@ -962,6 +962,61 @@ else
   _add F5 skip "requires $F_REPO/bin/voice-density.py + coo/foundations + python3"
 fi
 
+# ── F6 — External-touch (dark-accumulation pole, Stage 2) ─────
+# Stage 2 of disposition-proposal §5 F5 sub-condition 1
+# (time-since-last-external-touch per artifact category). Runs
+# bin/external-touch.py in --check mode against a cached vade-core
+# discussions index; fires when any mirrored artifact's most recent
+# external touch is past the category floor (foundations 60d,
+# retrospectives 90d, lineage 7d, memos tracked-not-floored).
+#
+# Cache-decoupled architecture: the gh api call is deliberately
+# separated into --refresh-cache mode and is NOT invoked here. F6
+# reads the cache offline. Refresh on demand via:
+#   python3 $F_REPO/bin/external-touch.py \
+#     --refresh-cache $VADE_CLOUD_STATE_DIR/external-touch-cache.json
+#
+# F6 only fires on above-floor violations; no-mirror cases are
+# excluded due to known matcher false-negatives (see
+# coo/instruments/external-touch.md §5).
+#
+# Numbering note: same axis as F5 — extends integrity-check.sh's
+# F-series numerically; this implements disposition-proposal F5
+# sub-condition 1.
+F6_SCRIPT="$F_REPO/bin/external-touch.py"
+F6_CACHE="${VADE_EXTERNAL_TOUCH_CACHE:-$VADE_CLOUD_STATE_DIR/external-touch-cache.json}"
+if [ -f "$F6_SCRIPT" ] && [ -d "$F_REPO/coo" ] && check_cmd python3; then
+  if [ ! -f "$F6_CACHE" ]; then
+    _add F6 skip "cache absent at $F6_CACHE — refresh via bin/external-touch.py --refresh-cache"
+  else
+    f6_tmp_err=$(mktemp 2>/dev/null || echo "/tmp/vade-f6-$$.err")
+    python3 "$F6_SCRIPT" --check --cache "$F6_CACHE" --coo-root "$F_REPO/coo" 2>"$f6_tmp_err"
+    f6_rc=$?
+    if [ "$f6_rc" -eq 0 ]; then
+      f6_age=$(python3 -c "
+import json, sys
+from datetime import datetime, timezone
+try:
+  with open('$F6_CACHE') as fh:
+    fetched = datetime.fromisoformat(json.load(fh)['fetched_at'])
+  age = (datetime.now(timezone.utc) - fetched).total_seconds() / 86400.0
+  print(f'{age:.1f}')
+except Exception:
+  print('?')
+" 2>/dev/null)
+      _add F6 true "no above-floor external-touch violations (cache age: ${f6_age}d)"
+    elif [ "$f6_rc" -eq 1 ]; then
+      f6_violations=$(grep -E '^\[' "$f6_tmp_err" 2>/dev/null | head -3 | tr '\n' ';' | sed 's/;$//')
+      _add F6 false "external-touch above-floor: ${f6_violations:-unknown}"
+    else
+      _add F6 skip "external-touch.py exited rc=$f6_rc"
+    fi
+    rm -f "$f6_tmp_err"
+  fi
+else
+  _add F6 skip "requires $F_REPO/bin/external-touch.py + coo + python3"
+fi
+
 # ── Serialize ────────────────────────────────────────────────
 mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || true
 
