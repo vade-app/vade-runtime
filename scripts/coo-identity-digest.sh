@@ -76,6 +76,48 @@ else
   cat "$CLAUDE_MD"
 fi
 
+# Identity layer (CB-* / OG-*) — inlined so the load-bearing identity
+# content lands at boot regardless of whether the agent performs the
+# CLAUDE.md §Session-start reading pass. When the first user message is
+# task-shaped, default LLM task-focus wins over procedure-first and the
+# reading pass is silently skipped; without this block the session runs
+# on operational metadata only. Per vade-runtime#226.
+IDENTITY_LAYER="$MEM_REPO/coo/identity_layer.md"
+if [ -f "$IDENTITY_LAYER" ]; then
+  echo ""
+  echo "───────────────────────────────────────────────────────────────"
+  echo "Identity layer (CB-* / OG-*) — inlined from coo/identity_layer.md"
+  echo "───────────────────────────────────────────────────────────────"
+  cat "$IDENTITY_LAYER"
+  echo "───────────────────────────────────────────────────────────────"
+fi
+
+# Lineage events — one-line stamps from each coo/lineage/<event>/README.md.
+# Full READMEs stay Read-on-demand per CLAUDE.md §6b; this surface gives
+# the agent a stable pointer to active events without requiring the read,
+# and is filesystem-driven so new events surface without a CLAUDE.md edit.
+# Dirs starting with `_` are meta-folders, not events; skipped.
+LINEAGE_DIR="$MEM_REPO/coo/lineage"
+if [ -d "$LINEAGE_DIR" ]; then
+  echo ""
+  echo "───────────────────────────────────────────────────────────────"
+  echo "Active lineage events (full READMEs in coo/lineage/<event>/)"
+  echo "───────────────────────────────────────────────────────────────"
+  for event_dir in "$LINEAGE_DIR"/*/; do
+    [ -d "$event_dir" ] || continue
+    event_name="$(basename "$event_dir")"
+    case "$event_name" in _*) continue ;; esac
+    readme="${event_dir}README.md"
+    [ -f "$readme" ] || continue
+    title="$(grep -m1 '^# ' "$readme" 2>/dev/null | sed 's/^# //')"
+    stamp="$(grep -m1 -E '^\*.*lineage' "$readme" 2>/dev/null | sed 's/^\*//;s/\*$//')"
+    [ -n "$title" ] || continue
+    printf "  %-18s %s\n" "$event_name:" "$title"
+    [ -n "$stamp" ] && printf "  %-18s %s\n" "" "$stamp"
+  done
+  echo "───────────────────────────────────────────────────────────────"
+fi
+
 if [ -f "$MEMO_INDEX" ] && check_cmd jq; then
   echo ""
   echo "───────────────────────────────────────────────────────────────"
