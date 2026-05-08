@@ -78,6 +78,11 @@ ensure_gh_coo_wrap "$SCRIPT_DIR/gh-coo-wrap.sh"
 # would clobber the well-formed PATH coo-bootstrap captured at install time.
 # vade-runtime#171.
 merge_coo_settings_state_dir
+# Persist VADE_RUNTIME_DIR into ~/.claude/settings.json env so hook subprocesses
+# and the Night's Watch nightly's standing-order call form
+# `"$VADE_RUNTIME_DIR/scripts/lib/list-r2-transcripts.py"` resolve cleanly.
+# Same state-dir-only rationale as the call above (no PATH rewrite). vade-runtime#228.
+merge_coo_settings_runtime_dir
 # Refresh the external-touch (F6) cache when it's older than 24h.
 # Build-time prewarm in cloud-setup.sh handles the fresh-snapshot case;
 # this catches snapshots resumed after the cache has gone stale and
