@@ -40,6 +40,15 @@ VADE_CLOUD_STATE_DIR="${VADE_CLOUD_STATE_DIR:-/home/user/.vade-cloud-state}"
 VADE_BUILD_LOG="${VADE_CLOUD_STATE_DIR}/build.log"
 VADE_SETUP_RECEIPT="${VADE_CLOUD_STATE_DIR}/setup-receipt.json"
 
+# vade-runtime working tree path. The Night's Watch standing order at
+# coo/nightly_review_task.md §1.a calls scripts via "$VADE_RUNTIME_DIR/scripts/lib/...";
+# the call form silently breaks when the var resolves empty. In production
+# the cloud harness clones this repo into /home/user/vade-runtime; persist
+# the value into ~/.claude/settings.json env via merge_coo_settings_runtime_dir
+# so hook subprocesses (and Night's Watch invocations) inherit it.
+# vade-runtime#228.
+VADE_RUNTIME_DIR="${VADE_RUNTIME_DIR:-/home/user/vade-runtime}"
+
 # Same shape as bootstrap_log_record but writes to the durable build log.
 # Use from cloud-setup.sh and anything else running at snapshot-build
 # time — PROBE entries, step transitions, timing — so sessions can
@@ -1387,6 +1396,15 @@ merge_coo_settings_state_dir() {
   _write_claude_settings_state_dir "$VADE_CLOUD_STATE_DIR"
 }
 
+# Persist VADE_RUNTIME_DIR into ~/.claude/settings.json env. Same shape and
+# rationale as merge_coo_settings_state_dir: host-stable path, no PATH rewrite,
+# safe to re-write on every session start. Hook subprocesses and the Night's
+# Watch nightly scripts depend on this for the §1.a standing-order call form.
+# vade-runtime#228.
+merge_coo_settings_runtime_dir() {
+  _write_claude_settings_runtime_dir "$VADE_RUNTIME_DIR"
+}
+
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
 # Code reads this at process startup, so ${GITHUB_MCP_PAT} etc. in
 # .mcp.json substitute correctly. Idempotent.
@@ -1596,6 +1614,42 @@ _write_claude_settings_state_dir() {
   ' "$settings_file"
   chmod 600 "$settings_file"
   log "  merged VADE_CLOUD_STATE_DIR into $settings_file"
+}
+
+# Write VADE_RUNTIME_DIR into ~/.claude/settings.json env without touching
+# the PATH key. Same shape as _write_claude_settings_state_dir; split from
+# any PATH-rewriting helper for the same rationale (hook subprocesses
+# inherit a thin PATH that would clobber the well-formed install-time
+# PATH if rewritten). Idempotent. vade-runtime#228.
+_write_claude_settings_runtime_dir() {
+  local runtime_dir="$1"
+  if ! check_cmd node; then
+    log "Warning: node missing; skipping ~/.claude/settings.json runtime-dir merge"
+    return 0
+  fi
+  local settings_dir="${HOME}/.claude"
+  local settings_file="$settings_dir/settings.json"
+  mkdir -p "$settings_dir"
+  [ -f "$settings_file" ] || echo '{}' > "$settings_file"
+
+  VADE_RUNTIME_DIR="$runtime_dir" node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(path, "utf8")) || {}; }
+    catch (e) {
+      console.error("[vade-setup] " + path + " unparseable; aborting runtime-dir merge.");
+      process.exit(1);
+    }
+    const merged = Object.assign({}, cfg.env || {});
+    if (process.env.VADE_RUNTIME_DIR) {
+      merged.VADE_RUNTIME_DIR = process.env.VADE_RUNTIME_DIR;
+    }
+    cfg.env = merged;
+    fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+  ' "$settings_file"
+  chmod 600 "$settings_file"
+  log "  merged VADE_RUNTIME_DIR into $settings_file"
 }
 
 # Ensure openssh-client is present (provides ssh-keygen + ssh-keyscan).

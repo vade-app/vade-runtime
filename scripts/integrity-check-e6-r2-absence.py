@@ -112,15 +112,79 @@ def _date_prefixes(now: datetime) -> list[str]:
     return list(dict.fromkeys([yesterday, today]))
 
 
-def _count_local_jsonls(projects_dir: Path, window_start: datetime) -> int:
-    """Count *.jsonl under projects_dir with mtime >= window_start."""
+def _in_flight_jsonls() -> set[str]:
+    """Return realpaths of *.jsonl files currently held open by any
+    process — i.e. the harness's in-flight session log(s).
+
+    Linux /proc-based; returns empty set on systems without /proc
+    (macOS, BSD). The check is bounded by the number of running
+    processes; integrity-check is short-lived so this is cheap.
+    """
+    open_paths: set[str] = set()
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return open_paths
+    for pid_dir in proc.iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        fd_dir = pid_dir / "fd"
+        if not fd_dir.is_dir():
+            continue
+        try:
+            for fd in fd_dir.iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if target.endswith(".jsonl"):
+                    try:
+                        open_paths.add(str(Path(target).resolve()))
+                    except OSError:
+                        open_paths.add(target)
+        except (OSError, PermissionError):
+            continue
+    return open_paths
+
+
+def _count_local_jsonls(
+    projects_dir: Path,
+    window_start: datetime,
+    exclude_session: str = "",
+    in_flight: set[str] | None = None,
+) -> int:
+    """Count *.jsonl under projects_dir with mtime >= window_start.
+
+    The current session's jsonl is being written continuously (mtime always
+    fresh) but its Stop-hook export hasn't fired yet, so counting it
+    inflates local_count and produces a false E6 alarm on quiet days where
+    the only "recent local activity" is the in-flight session itself
+    (vade-runtime#229). Two exclusion paths:
+
+    1. `in_flight` (set of realpaths): primary, /proc-based; catches
+       any jsonl currently held open by any process (the harness's
+       active session log). Robust because it doesn't assume the env
+       var format matches the jsonl filename.
+    2. `exclude_session`: secondary, env-var-driven; skips jsonls
+       whose stem matches the given id. Useful when the Claude Code
+       env carries a CLAUDE_CODE_SESSION_ID that matches the jsonl
+       stem (UUID format), but unreliable when the harness exposes
+       a different identifier (e.g. cloud `cse_*`) at hook time.
+    """
     count = 0
     if not projects_dir.is_dir():
         return 0
     cutoff_ts = window_start.timestamp()
+    in_flight = in_flight or set()
     for path in projects_dir.rglob("*.jsonl"):
         try:
             if path.stat().st_mtime >= cutoff_ts:
+                if exclude_session and path.stem == exclude_session:
+                    continue
+                try:
+                    if str(path.resolve()) in in_flight:
+                        continue
+                except OSError:
+                    pass
                 count += 1
         except OSError:
             continue
@@ -144,6 +208,14 @@ def main() -> int:
         help="Path to the Claude Code per-project jsonl tree. Default "
         "~/.claude/projects (also via VADE_E6_PROJECTS_DIR).",
     )
+    ap.add_argument(
+        "--exclude-session",
+        default=os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip(),
+        help="Session id (jsonl stem) to exclude from local_count. The "
+        "in-flight session's jsonl is being written continuously and "
+        "would otherwise inflate the count on quiet days. Defaults to "
+        "$CLAUDE_CODE_SESSION_ID. vade-runtime#229.",
+    )
     ap.add_argument("--verbose", action="store_true", help="Per-row detail to stderr.")
     args = ap.parse_args()
 
@@ -164,10 +236,22 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(hours=args.window_h)
 
-    local_count = _count_local_jsonls(projects_dir, window_start)
+    in_flight = _in_flight_jsonls()
+    local_count = _count_local_jsonls(
+        projects_dir,
+        window_start,
+        exclude_session=args.exclude_session,
+        in_flight=in_flight,
+    )
     if args.verbose:
+        excl_bits = []
+        if args.exclude_session:
+            excl_bits.append(f"session={args.exclude_session}")
+        if in_flight:
+            excl_bits.append(f"in_flight={len(in_flight)}")
+        excl = f" (excl {', '.join(excl_bits)})" if excl_bits else ""
         _stderr(
-            f"local jsonls in last {args.window_h}h under {projects_dir}: "
+            f"local jsonls in last {args.window_h}h under {projects_dir}{excl}: "
             f"{local_count}"
         )
 
