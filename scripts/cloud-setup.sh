@@ -185,6 +185,22 @@ else
   log "Warning: mem0-mcp-server install failed at build time; first session will boot with Mem0 MCP dark."
 fi
 
+# Install Quarto for slide-deck and document rendering. Same
+# snapshot-persistence rationale as op + gh + mem0-mcp-server: paying
+# the ~131 MB fetch at build time keeps SessionStart off the egress
+# proxy. Quarto bundles its own pandoc + deno, so the install also
+# brings pandoc onto the bundle without a separate package step.
+# Best-effort: on failure the first session that needs Quarto fetches
+# on demand. Introduced for the 2026-shiffrin-conference deck under
+# vade-coo-memory/coo/_drafts/; kept standing for any future
+# markdown-to-{revealjs,pptx,pdf} workflow the chain produces.
+if ensure_quarto_cli; then
+  build_log_record OK "cloud-setup: quarto installed at build time"
+else
+  build_log_record WARN "cloud-setup: quarto install failed at build time; first session will need to install on demand"
+  log "Warning: quarto install failed at build time; first session that uses it will pay a ~131 MB direct-fetch."
+fi
+
 # Pre-fetch the 1Password MCP server (@takescake/1password-mcp) into the
 # global npm cache so first-session `npx -y` resolves offline. Same
 # snapshot-persistence rationale as op + gh + mem0 — paying the npm

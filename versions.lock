@@ -44,6 +44,23 @@ uv                  0.11.7    # Python package/tool installer. Used
                               # pipe) so image builds are reproducible.
                               # Bump when a new mem0-mcp-server release
                               # needs a newer uv, otherwise leave alone.
+quarto              1.9.37    # Slide-deck and document rendering
+                              # (markdown → revealjs / pptx / pdf via
+                              # bundled pandoc + deno). Originally
+                              # introduced for the 2026-shiffrin-conference
+                              # talk under coo/_drafts/, kept for any
+                              # future markdown-to-{pptx,pdf} workflow
+                              # the chain produces. Tarball is ~131 MB —
+                              # the largest single tool in the snapshot,
+                              # but bundles pandoc which is independently
+                              # useful. Pinned via QUARTO_VERSION_DEFAULT
+                              # in lib/common.sh. Bump when a newer
+                              # pandoc release is needed; track upstream
+                              # at github.com/quarto-dev/quarto-cli.
+                              # Not yet in the binary-vendor bundle —
+                              # add to .github/workflows/publish-binary-vendor.yml
+                              # as a follow-up if snapshot-build SLA
+                              # benefits from consolidating the fetch.
 
 # Consolidated binary vendor bundle. Single tarball published by
 # .github/workflows/publish-binary-vendor.yml on this repo, containing
