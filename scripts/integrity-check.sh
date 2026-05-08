@@ -1041,9 +1041,13 @@ fi
 #   python3 $F_REPO/bin/external-touch.py \
 #     --refresh-cache $VADE_CLOUD_STATE_DIR/external-touch-cache.json
 #
-# F6 only fires on above-floor violations; no-mirror cases are
-# excluded due to known matcher false-negatives (see
-# coo/instruments/external-touch.md §5).
+# F6 fires on:
+#   - recurring categories (foundations, retrospectives): above-floor
+#     violations only — no-mirror exempt due to matcher false-negatives.
+#   - one-shot categories (lineage, per vade-coo-memory#508):
+#     no-mirror-past-window violations (age from first commit > floor).
+#     Mirrored-once = satisfied permanently.
+# See coo/instruments/external-touch.md §2.
 #
 # Numbering note: same axis as F5 — extends integrity-check.sh's
 # F-series numerically; this implements disposition-proposal F5
@@ -1069,10 +1073,10 @@ try:
 except Exception:
   print('?')
 " 2>/dev/null)
-      _add F6 true "no above-floor external-touch violations (cache age: ${f6_age}d)"
+      _add F6 true "no external-touch floor violations (cache age: ${f6_age}d)"
     elif [ "$f6_rc" -eq 1 ]; then
       f6_violations=$(grep -E '^\[' "$f6_tmp_err" 2>/dev/null | head -3 | tr '\n' ';' | sed 's/;$//')
-      _add F6 false "external-touch above-floor: ${f6_violations:-unknown}"
+      _add F6 false "external-touch violation: ${f6_violations:-unknown}"
     else
       _add F6 skip "external-touch.py exited rc=$f6_rc"
     fi
