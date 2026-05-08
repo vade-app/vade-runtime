@@ -225,11 +225,11 @@ if check_cmd node && [ -f "$HOME/.claude/settings.json" ]; then
     let c = {};
     try { c = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) || {}; } catch { process.exit(0); }
     const env = c.env || {};
-    const req = ["GITHUB_MCP_PAT","GITHUB_TOKEN","AGENTMAIL_API_KEY","MEM0_API_KEY","VADE_CLOUD_STATE_DIR"];
+    const req = ["GITHUB_MCP_PAT","GITHUB_TOKEN","AGENTMAIL_API_KEY","MEM0_API_KEY","VADE_CLOUD_STATE_DIR","VADE_RUNTIME_DIR"];
     process.stdout.write(req.filter(k => !env[k]).join(","));
   ' "$HOME/.claude/settings.json" 2>/dev/null)"
   if [ -z "$D4_missing" ]; then
-    _add D4 true "settings.json env has GITHUB_MCP_PAT, GITHUB_TOKEN, AGENTMAIL_API_KEY, MEM0_API_KEY, VADE_CLOUD_STATE_DIR"
+    _add D4 true "settings.json env has GITHUB_MCP_PAT, GITHUB_TOKEN, AGENTMAIL_API_KEY, MEM0_API_KEY, VADE_CLOUD_STATE_DIR, VADE_RUNTIME_DIR"
   else
     _add D4 false "settings.json env missing: $D4_missing"
   fi
