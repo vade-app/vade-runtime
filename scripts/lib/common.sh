@@ -611,6 +611,12 @@ GH_VERSION_DEFAULT="2.91.0"
 # api.mem0.ai (vade-runtime#36/#109). Pinned because the upstream repo
 # (mem0ai/mem0-mcp) was archived in 2025-12 — bump deliberately.
 MEM0_MCP_SERVER_VERSION_DEFAULT="0.2.1"
+# Quarto CLI for markdown → slide-deck rendering. Bundles its own
+# pandoc and deno. Introduced for the 2026-shiffrin-conference deck;
+# kept as a standing tool for any future markdown-to-{pptx,pdf}
+# workflow. ~131 MB tarball — the largest single tool in the snapshot.
+# Track upstream at github.com/quarto-dev/quarto-cli.
+QUARTO_VERSION_DEFAULT="1.9.37"
 # Binary vendor bundle. Single tarball published by
 # .github/workflows/publish-binary-vendor.yml containing op + gh + uv +
 # mem0-mcp-server (with mem0's uv-managed venv tree) at production
@@ -1164,6 +1170,98 @@ ensure_mem0_mcp_server() {
     return 1
   fi
   log "Installed mem0-mcp-server v${version}"
+}
+
+# Durable Quarto CLI for slide-deck and document rendering.
+#
+# Installs the Quarto CLI tarball (~131 MB) into a snapshot-persistent
+# path under the user's .local/share/quarto, with a symlink at
+# <bindir>/quarto. The tarball bundles its own pandoc and deno, so a
+# successful install also gives subsequent code paths pandoc-on-PATH
+# transitively (via the bundled binary, not via a separate install).
+#
+# Linux-only auto-install. On macOS (Darwin) the expectation is that
+# `brew install --cask quarto` has already satisfied check_cmd; if it
+# hasn't, this function refuses rather than dropping a non-runnable
+# Linux tarball. Bindir resolution is shared with ensure_op_cli /
+# ensure_gh_cli via _snapshot_user_bindir. Install dir resolution is
+# parallel to ensure_mem0_mcp_server's UV_TOOL_DIR — share/quarto under
+# the snapshot-persistent tree so the bundle survives resume.
+#
+# Rationale: introduced for the 2026-shiffrin-conference deck
+# (vade-coo-memory/coo/_drafts/2026-shiffrin-conference/), kept as a
+# standing tool for future markdown-to-{revealjs,pptx,pdf} workflows.
+# Best-effort at build time; cloud-setup logs a warning on failure and
+# the first session that needs Quarto fetches on demand.
+ensure_quarto_cli() {
+  local bindir
+  bindir="$(_snapshot_user_bindir)"
+  case ":$PATH:" in
+    *":$bindir:"*) ;;
+    *) export PATH="$bindir:$PATH" ;;
+  esac
+
+  if check_cmd quarto; then
+    log "quarto present: $(quarto --version 2>&1 | head -1)"
+    return 0
+  fi
+
+  local os
+  os="$(uname -s)"
+  case "$os" in
+    Linux) ;;
+    Darwin)
+      log "quarto not present on macOS; install via: brew install --cask quarto"
+      return 1
+      ;;
+    *)
+      log "quarto: unsupported OS '$os'"
+      return 1
+      ;;
+  esac
+
+  local version="${QUARTO_VERSION:-$QUARTO_VERSION_DEFAULT}"
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) log "quarto: unsupported arch '$arch'"; return 1 ;;
+  esac
+
+  # Install layout: <bindir>/../share/quarto/ holds the bundle (bin/,
+  # share/, ...); <bindir>/quarto is a symlink to the bundle's bin/quarto.
+  # Mirrors the convention ensure_mem0_mcp_server uses for its uv-tool
+  # share dir, so both tools' state lives under the same .local/share/.
+  local install_dir
+  install_dir="${bindir%/bin}/share/quarto"
+
+  mkdir -p "$install_dir" "$bindir"
+
+  local url="https://github.com/quarto-dev/quarto-cli/releases/download/v${version}/quarto-${version}-linux-${arch}.tar.gz"
+  local tmp
+  tmp="$(mktemp -d)"
+  log "Downloading quarto v${version} (${arch}) → $install_dir"
+  if ! retry 5 curl -sfL "$url" -o "$tmp/quarto.tar.gz"; then
+    log "quarto download failed after retries: $url"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if ! tar -xzf "$tmp/quarto.tar.gz" -C "$install_dir" --strip-components=1; then
+    log "quarto extraction failed"
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+
+  ln -sfn "$install_dir/bin/quarto" "$bindir/quarto"
+
+  if ! quarto --version >/dev/null 2>&1; then
+    log "quarto install appears broken"
+    return 1
+  fi
+  log "Installed quarto v${version}"
 }
 
 # Expose gh on Claude Code's Bash-tool PATH every session.
