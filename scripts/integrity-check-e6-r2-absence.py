@@ -149,8 +149,10 @@ def _in_flight_jsonls() -> set[str]:
 def _count_local_jsonls(
     projects_dir: Path,
     window_start: datetime,
+    now: datetime,
     exclude_session: str = "",
     in_flight: set[str] | None = None,
+    inflight_recency_s: int = 60,
 ) -> int:
     """Count *.jsonl under projects_dir with mtime >= window_start.
 
@@ -158,33 +160,49 @@ def _count_local_jsonls(
     fresh) but its Stop-hook export hasn't fired yet, so counting it
     inflates local_count and produces a false E6 alarm on quiet days where
     the only "recent local activity" is the in-flight session itself
-    (vade-runtime#229). Two exclusion paths:
+    (vade-runtime#229). Three exclusion paths, in order:
 
-    1. `in_flight` (set of realpaths): primary, /proc-based; catches
-       any jsonl currently held open by any process (the harness's
-       active session log). Robust because it doesn't assume the env
-       var format matches the jsonl filename.
-    2. `exclude_session`: secondary, env-var-driven; skips jsonls
-       whose stem matches the given id. Useful when the Claude Code
-       env carries a CLAUDE_CODE_SESSION_ID that matches the jsonl
-       stem (UUID format), but unreliable when the harness exposes
-       a different identifier (e.g. cloud `cse_*`) at hook time.
+    1. `in_flight` (set of realpaths): /proc-based; catches any jsonl
+       currently held open by any process (harness's active session log).
+       Most precise when it works, but the cloud harness opens-write-closes
+       per append rather than holding the fd, so this returns empty there
+       (vade-runtime#232).
+    2. `exclude_session`: env-var-driven; skips jsonls whose stem matches
+       the given id. Works when `CLAUDE_CODE_SESSION_ID` matches the jsonl
+       filename UUID (interactive Bash subprocess), but unreliable at
+       SessionStart hook time on cloud where the harness exposes the
+       cloud event-style id (`cse_*`) instead.
+    3. `inflight_recency_s`: any jsonl with mtime within the last N
+       seconds is considered in-flight regardless of name or fd state
+       (vade-runtime#232). The fd-less, env-form-agnostic backstop —
+       catches the in-flight session at SessionStart hook time on cloud
+       where the first two paths fail. 60s default covers boot-time
+       runs (jsonl mtime ~1s old when there's activity) without masking
+       legitimately-stale never-exported jsonls (export normally fires
+       seconds after Stop). Set to 0 to disable.
     """
     count = 0
     if not projects_dir.is_dir():
         return 0
     cutoff_ts = window_start.timestamp()
+    now_ts = now.timestamp()
     in_flight = in_flight or set()
     for path in projects_dir.rglob("*.jsonl"):
         try:
-            if path.stat().st_mtime >= cutoff_ts:
-                if exclude_session and path.stem == exclude_session:
-                    continue
+            st = path.stat()
+            if st.st_mtime >= cutoff_ts:
                 try:
                     if str(path.resolve()) in in_flight:
                         continue
                 except OSError:
                     pass
+                if exclude_session and path.stem == exclude_session:
+                    continue
+                if (
+                    inflight_recency_s > 0
+                    and (now_ts - st.st_mtime) <= inflight_recency_s
+                ):
+                    continue
                 count += 1
         except OSError:
             continue
@@ -216,6 +234,19 @@ def main() -> int:
         "would otherwise inflate the count on quiet days. Defaults to "
         "$CLAUDE_CODE_SESSION_ID. vade-runtime#229.",
     )
+    ap.add_argument(
+        "--inflight-recency-s",
+        type=int,
+        default=int(os.environ.get("VADE_E6_INFLIGHT_RECENCY_S", "60")),
+        help="Treat any jsonl whose mtime is within N seconds of now as "
+        "in-flight and exclude it from local_count, regardless of name "
+        "or /proc state. The fd-less, env-form-agnostic backstop for "
+        "harnesses where the first two exclusion paths fail (cloud, where "
+        "$CLAUDE_CODE_SESSION_ID at hook time is `cse_*` rather than the "
+        "jsonl UUID, and where no process holds the jsonl fd open). "
+        "Default 60 (also via VADE_E6_INFLIGHT_RECENCY_S). Set to 0 to "
+        "disable. vade-runtime#232.",
+    )
     ap.add_argument("--verbose", action="store_true", help="Per-row detail to stderr.")
     args = ap.parse_args()
 
@@ -240,15 +271,19 @@ def main() -> int:
     local_count = _count_local_jsonls(
         projects_dir,
         window_start,
+        now,
         exclude_session=args.exclude_session,
         in_flight=in_flight,
+        inflight_recency_s=args.inflight_recency_s,
     )
     if args.verbose:
         excl_bits = []
-        if args.exclude_session:
-            excl_bits.append(f"session={args.exclude_session}")
         if in_flight:
             excl_bits.append(f"in_flight={len(in_flight)}")
+        if args.exclude_session:
+            excl_bits.append(f"session={args.exclude_session}")
+        if args.inflight_recency_s > 0:
+            excl_bits.append(f"recency<={args.inflight_recency_s}s")
         excl = f" (excl {', '.join(excl_bits)})" if excl_bits else ""
         _stderr(
             f"local jsonls in last {args.window_h}h under {projects_dir}{excl}: "
