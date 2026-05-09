@@ -991,16 +991,12 @@ fi
 # (author email coo@vade-app.dev) or carry 'ven-human-action:' in body.
 # Silent venpopov-authored commits on coo-scope paths are F4-relevant.
 #
-# F4_ALLOWLIST_SHA — explicit per-commit carve-outs where the marker
-# was present in the PR body at merge time but the f4-marker workflow
-# raced past a fast manual merge, leaving the commit body without the
-# marker. Each entry must cite the originating PR + tracking issue.
+# F4_ALLOWLIST_SHA — explicit per-commit carve-outs for direct-to-main
+# commits with no PR (the PR-body fallback below can't help when there
+# is no PR). PR-merge commits where the f4-marker workflow raced past
+# the merge are handled by the fallback at audit time, not this list.
 # Tracked structurally at vade-coo-memory#271.
 F4_ALLOWLIST_SHA=(
-  # 0fd421a198 — vade-coo-memory#262 "add insight analysis" (Ven-
-  # authored doc-add); PR body carries ven-human-action marker but
-  # the merge stripped it. See vade-coo-memory#271 for the race fix.
-  "0fd421a198"
   # 7cb8a86da4 — vade-coo-memory direct commit "update gitignore" by
   # Ven on 2026-05-01 outside the PR flow (no PR body, so the f4-marker
   # workflow at vade-coo-memory/.github/workflows/f4-marker.yml had no
@@ -1031,6 +1027,26 @@ if [ -d "$F_REPO/.git" ] && check_cmd git; then
       case "$sha" in "$allow_sha"*) allowed=1; break ;; esac
     done
     [ "$allowed" -eq 1 ] && continue
+    # PR-body fallback for f4-marker race (vade-coo-memory#271): the
+    # f4-marker workflow may inject the marker into the PR body after
+    # the merge, leaving the commit body without it. When the commit
+    # subject ends in "(#NNN)", look up the PR body via gh api and
+    # accept if the marker is present there. Falls open (commit lands
+    # in f4_bad) when gh missing or auth fails — same observability
+    # as today.
+    pr_num=""
+    subject=$(git -C "$F_REPO" log -1 --format='%s' "$sha" 2>/dev/null || echo '')
+    if [[ "$subject" =~ \(#([0-9]+)\)[[:space:]]*$ ]]; then
+      pr_num="${BASH_REMATCH[1]}"
+    fi
+    if [ -n "$pr_num" ] && check_cmd gh; then
+      pr_body=$(GH_TOKEN="${GITHUB_MCP_PAT:-${GH_TOKEN:-}}" \
+        gh api "repos/vade-app/vade-coo-memory/pulls/$pr_num" \
+        --jq '.body' 2>/dev/null || true)
+      if printf '%s' "$pr_body" | grep -q 'ven-human-action:'; then
+        continue
+      fi
+    fi
     f4_bad+=("${sha:0:10}($email)")
   done < <(git -C "$F_REPO" log --since="$F_CUTOFF_GIT" --format='%H|%ae|%B%x00' 2>/dev/null | awk 'BEGIN{RS="\0"} { sub(/^\n/, ""); if (NF) { gsub(/\n/,"\\n"); print } }')
 
