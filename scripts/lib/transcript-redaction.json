@@ -87,6 +87,20 @@
       "notes": "AgentMail API key (length 76 per coo-bootstrap.sh). Prefix unverified — refine when shape known."
     },
     {
+      "id": "cloudflare-api-token",
+      "regex": "\\bcfat_[A-Za-z0-9_-]{40,}\\b",
+      "replacement": "[REDACTED:cloudflare-api-token]",
+      "secret_var": "CLOUDFLARE_API_TOKEN",
+      "notes": "Cloudflare Account-owned API token (cfat_ prefix; introduced ~2024). Live token observed at length 53 (cfat_ + 48 chars). MEMO-2026-05-09-vwk2."
+    },
+    {
+      "id": "cloudflare-account-id",
+      "regex": "\\baccounts/[a-f0-9]{32}\\b",
+      "replacement": "accounts/[REDACTED:cloudflare-account-id]",
+      "secret_var": "CLOUDFLARE_ACCOUNT_ID",
+      "notes": "Cloudflare account UUID (32-char lowercase hex). Not strictly secret (appears in committed wrangler.jsonc and Cloudflare URLs throughout the platform), but the Secret Registration Rule requires every fetch_coo_secrets export to have a pattern. Context-scoped to accounts/<id> URL paths to avoid false positives against arbitrary 32-char hex (commit SHAs, file hashes, etc)."
+    },
+    {
       "id": "stripe-key",
       "regex": "\\b(?:sk|rk)_live_[A-Za-z0-9]{24,}\\b",
       "replacement": "[REDACTED:stripe-key]",
