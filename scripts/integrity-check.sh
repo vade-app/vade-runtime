@@ -759,6 +759,73 @@ else
 fi
 _add E8 "$E8_ok" "$E8_detail"
 
+# E9: Cloudflare API token reachable + scoped per MEMO-2026-05-09-vwk2.
+# Probe contract:
+#   - GET https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify
+#     with Authorization: Bearer $CLOUDFLARE_API_TOKEN.
+#   - Pass: HTTP 200 + result.status == "active".
+# Surfaces revocation, expiry, or scope-change between snapshots and
+# reports expires_on so the next rotation deadline is loud.
+# Account-scoped endpoint because the COO token is an Account-owned
+# API token (cfat_ prefix); the user-scoped /user/tokens/verify
+# endpoint rejects account tokens with code 1000 "Invalid API Token".
+# Best-effort: token is feature-gated (not all sessions need Cloudflare
+# access), so missing $CLOUDFLARE_API_TOKEN or $CLOUDFLARE_ACCOUNT_ID
+# is `skip`, not `false`. CI fake-env mode also skips.
+E9_ok=skip
+E9_detail="requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in env"
+if [ -n "${VADE_CI_WORKSPACE_ROOT:-}" ] || [ -n "${VADE_BINDIR_OVERRIDE:-}" ]; then
+  E9_ok=skip
+  E9_detail="skipped in CI fake-env (VADE_CI_WORKSPACE_ROOT or VADE_BINDIR_OVERRIDE set); live-only probe"
+elif [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+  E9_ok=skip
+  E9_detail="CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID not in hook env (settings.json env will populate for wrangler spawn; this probe runs in a hook subprocess that may not have inherited yet)"
+elif ! check_cmd curl || ! check_cmd node; then
+  E9_ok=skip
+  E9_detail="curl or node missing; cannot probe"
+else
+  # No -f so we keep the response body on 4xx (parsing it gives us the
+  # real Cloudflare error message instead of a generic "non-2xx").
+  E9_resp="$(curl -sS -m 8 \
+    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" 2>/dev/null || true)"
+  if [ -z "$E9_resp" ]; then
+    E9_ok=false
+    E9_detail="api.cloudflare.com unreachable from this hook (no body returned within 8s); check egress to api.cloudflare.com or DNS"
+  else
+    E9_verdict="$(printf '%s' "$E9_resp" | node -e '
+      let d = ""; process.stdin.on("data", c => d += c);
+      process.stdin.on("end", () => {
+        try {
+          const o = JSON.parse(d);
+          if (o.success && o.result && o.result.status === "active") {
+            const id = String(o.result.id || "").slice(0, 8);
+            const exp = o.result.expires_on || "no-expiry";
+            process.stdout.write("ok|" + id + "|" + exp);
+          } else {
+            const errCode = (o.errors && o.errors[0] && o.errors[0].code) || "?";
+            const errMsg = ((o.errors && o.errors[0] && o.errors[0].message) || "unknown error").slice(0, 120);
+            const status = (o.result && o.result.status) || "missing";
+            process.stdout.write("bad|" + status + "|code=" + errCode + " " + errMsg);
+          }
+        } catch (e) {
+          process.stdout.write("bad|parse-failed|body: " + d.slice(0, 200));
+        }
+      });
+    ' 2>/dev/null || echo "bad|node-failed|node parse subprocess failed")"
+    IFS='|' read -r E9_verdict_kind E9_verdict_a E9_verdict_b <<<"$E9_verdict"
+    if [ "$E9_verdict_kind" = "ok" ]; then
+      E9_ok=true
+      E9_detail="Cloudflare API token active (id-prefix=$E9_verdict_a; expires=$E9_verdict_b; verified against /accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify per MEMO-2026-05-09-vwk2)"
+    else
+      E9_ok=false
+      E9_detail="Cloudflare token verify failed: status=$E9_verdict_a $E9_verdict_b"
+    fi
+  fi
+fi
+_add E9 "$E9_ok" "$E9_detail"
+
 # ── Group F: Culture-system substrate discipline ─────────────
 # Implements E1–E4 from coo/foundations/2026-04-22_we-can-claim-a-record.md
 # §5d (label delta: the essay calls these E1–E4; Group E is occupied by

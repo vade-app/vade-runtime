@@ -1339,7 +1339,7 @@ fetch_coo_secrets() {
   log "Fetching COO secrets from 1Password vault COO"
   local github_pat="" agentmail_key="" mem0_key=""
   local r2_access_key_id="" r2_secret_access_key="" age_identity=""
-  local vade_auth_token=""
+  local vade_auth_token="" cloudflare_api_token="" cloudflare_account_id=""
   local got=0
 
   if github_pat="$(retry 3 op read 'op://COO/vade-coo-self-2026-04/token')" && [ -n "$github_pat" ]; then
@@ -1408,6 +1408,35 @@ fetch_coo_secrets() {
     log "  WARN: op://COO/vade-canvas-coo/credential unavailable; VADE_AUTH_TOKEN will be unset (vade-core/.mcp.json placeholder resolves empty; vade-canvas MCP unreachable from vade-core/ cwd)"
   fi
 
+  # Cloudflare API token for COO-driven Worker deploys + DNS edits on
+  # vade-app.dev. Carve-out scope: MEMO-2026-05-09-vwk2 (in-scope:
+  # `wrangler deploy/secret` on existing Workers, DNS CRUD on
+  # vade-app.dev, Workers Routes binding, all reads; out-of-scope:
+  # creating new R2/D1/KV/Workers/zones, plan upgrades — BDFL approval).
+  # Best-effort: missing item warns and leaves CLOUDFLARE_API_TOKEN
+  # unset (wrangler then fails with a clean auth error rather than a
+  # stale or wrong-account credential).
+  if cloudflare_api_token="$(retry 3 op read 'op://COO/cloudflare-api-token-vade-coo/credential')" && [ -n "$cloudflare_api_token" ]; then
+    log "  read Cloudflare API token (len=${#cloudflare_api_token})"
+    got=$((got+1))
+  else
+    cloudflare_api_token=""
+    log "  WARN: op://COO/cloudflare-api-token-vade-coo/credential unavailable; CLOUDFLARE_API_TOKEN will be unset (wrangler deploy/secret and DNS edits unauthenticated)"
+  fi
+
+  # Cloudflare account_id pairs with the token. Account-owned tokens
+  # (cfat_ prefix) require account-scoped endpoints for verify/list
+  # operations; the integrity probe and any direct API calls need the
+  # account UUID. wrangler reads CLOUDFLARE_ACCOUNT_ID from env when
+  # multiple accounts are visible.
+  if cloudflare_account_id="$(retry 3 op read 'op://COO/cloudflare-api-token-vade-coo/account_id')" && [ -n "$cloudflare_account_id" ]; then
+    log "  read Cloudflare account id (len=${#cloudflare_account_id})"
+    got=$((got+1))
+  else
+    cloudflare_account_id=""
+    log "  WARN: op://COO/cloudflare-api-token-vade-coo/account_id unavailable; CLOUDFLARE_ACCOUNT_ID will be unset (E9 probe will skip; wrangler may prompt for account selection)"
+  fi
+
   if [ "$got" -eq 0 ]; then
     log "  no COO secrets could be fetched; skipping env file write"
     return 1
@@ -1432,6 +1461,8 @@ fetch_coo_secrets() {
       if [ -n "$r2_secret_access_key" ]; then echo "export R2_TRANSCRIPTS_SECRET_ACCESS_KEY='$r2_secret_access_key'"; fi
       if [ -n "$age_identity" ];         then echo "export TRANSCRIPTS_AGE_IDENTITY='$age_identity'"; fi
       if [ -n "$vade_auth_token" ];      then echo "export VADE_AUTH_TOKEN='$vade_auth_token'"; fi
+      if [ -n "$cloudflare_api_token" ]; then echo "export CLOUDFLARE_API_TOKEN='$cloudflare_api_token'"; fi
+      if [ -n "$cloudflare_account_id" ]; then echo "export CLOUDFLARE_ACCOUNT_ID='$cloudflare_account_id'"; fi
     } > "$env_file"
   )
   chmod 600 "$env_file"
@@ -1449,6 +1480,8 @@ fetch_coo_secrets() {
   if [ -n "$r2_secret_access_key" ]; then export R2_TRANSCRIPTS_SECRET_ACCESS_KEY="$r2_secret_access_key"; fi
   if [ -n "$age_identity" ];         then export TRANSCRIPTS_AGE_IDENTITY="$age_identity"; fi
   if [ -n "$vade_auth_token" ];      then export VADE_AUTH_TOKEN="$vade_auth_token"; fi
+  if [ -n "$cloudflare_api_token" ]; then export CLOUDFLARE_API_TOKEN="$cloudflare_api_token"; fi
+  if [ -n "$cloudflare_account_id" ]; then export CLOUDFLARE_ACCOUNT_ID="$cloudflare_account_id"; fi
   return 0
 }
 
@@ -1468,7 +1501,9 @@ merge_coo_settings_env() {
     "${R2_TRANSCRIPTS_SECRET_ACCESS_KEY:-}" \
     "${TRANSCRIPTS_AGE_IDENTITY:-}" \
     "${VADE_BEARER_TOKEN:-}" \
-    "${VADE_MCP_URL:-}"
+    "${VADE_MCP_URL:-}" \
+    "${CLOUDFLARE_API_TOKEN:-}" \
+    "${CLOUDFLARE_ACCOUNT_ID:-}"
 }
 
 # Persist non-secret bootstrap-derived path state into ~/.claude/settings.json
@@ -1519,6 +1554,7 @@ _write_claude_settings_env() {
   local pat="$1" agentmail="$2" mem0="$3" vade_auth_token="${4:-}"
   local r2_access_key_id="${5:-}" r2_secret_access_key="${6:-}" age_identity="${7:-}"
   local vade_bearer_token="${8:-}" vade_mcp_url="${9:-}"
+  local cloudflare_api_token="${10:-}" cloudflare_account_id="${11:-}"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json env merge"
     return 0
@@ -1540,6 +1576,8 @@ _write_claude_settings_env() {
   TRANSCRIPTS_AGE_IDENTITY="$age_identity" \
   VADE_BEARER_TOKEN="$vade_bearer_token" \
   VADE_MCP_URL="$vade_mcp_url" \
+  CLOUDFLARE_API_TOKEN="$cloudflare_api_token" \
+  CLOUDFLARE_ACCOUNT_ID="$cloudflare_account_id" \
   NODE_PATH="$node_path" PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" node -e '
     const fs = require("fs");
     const path = process.argv[1];
@@ -1577,6 +1615,12 @@ _write_claude_settings_env() {
     }
     if (process.env.VADE_MCP_URL) {
       merged.VADE_MCP_URL = process.env.VADE_MCP_URL;
+    }
+    if (process.env.CLOUDFLARE_API_TOKEN) {
+      merged.CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+    }
+    if (process.env.CLOUDFLARE_ACCOUNT_ID) {
+      merged.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
     }
     if (process.env.NODE_PATH) {
       merged.NODE_PATH = process.env.NODE_PATH;

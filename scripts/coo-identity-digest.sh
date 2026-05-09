@@ -188,26 +188,33 @@ if [ "$_digest_saw_fresh" -eq 0 ]; then
   fi
 fi
 
-env_has_pat="no"; env_has_mail="no"
-[ -n "${GITHUB_MCP_PAT:-}" ]    && env_has_pat="yes"
-[ -n "${AGENTMAIL_API_KEY:-}" ] && env_has_mail="yes"
+env_has_pat="no"; env_has_mail="no"; env_has_cf="no"
+[ -n "${GITHUB_MCP_PAT:-}" ]      && env_has_pat="yes"
+[ -n "${AGENTMAIL_API_KEY:-}" ]   && env_has_mail="yes"
+# CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID move as a pair (the
+# account-scoped verify + wrangler --account-id both need both).
+# Surface as a single yes/no so the boot line stays one-screen-wide.
+[ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && env_has_cf="yes"
 
-settings_pat="unknown"; settings_mail="unknown"
+settings_pat="unknown"; settings_mail="unknown"; settings_cf="unknown"
 if [ -f "$SETTINGS_FILE" ] && check_cmd node; then
   probe="$(node -e '
     const fs = require("fs");
     try {
       const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
       const e = cfg.env || {};
-      console.log((e.GITHUB_MCP_PAT ? "yes" : "no") + " " + (e.AGENTMAIL_API_KEY ? "yes" : "no"));
-    } catch (_) { console.log("unknown unknown"); }
-  ' "$SETTINGS_FILE" 2>/dev/null || echo "unknown unknown")"
-  settings_pat="${probe%% *}"
-  settings_mail="${probe##* }"
+      console.log(
+        (e.GITHUB_MCP_PAT ? "yes" : "no") + " " +
+        (e.AGENTMAIL_API_KEY ? "yes" : "no") + " " +
+        ((e.CLOUDFLARE_API_TOKEN && e.CLOUDFLARE_ACCOUNT_ID) ? "yes" : "no")
+      );
+    } catch (_) { console.log("unknown unknown unknown"); }
+  ' "$SETTINGS_FILE" 2>/dev/null || echo "unknown unknown unknown")"
+  read -r settings_pat settings_mail settings_cf <<<"$probe"
 fi
 
-echo "  Process env:       GITHUB_MCP_PAT=$env_has_pat  AGENTMAIL_API_KEY=$env_has_mail"
-echo "  settings.json env: GITHUB_MCP_PAT=$settings_pat  AGENTMAIL_API_KEY=$settings_mail"
+echo "  Process env:       GITHUB_MCP_PAT=$env_has_pat  AGENTMAIL_API_KEY=$env_has_mail  CLOUDFLARE=$env_has_cf"
+echo "  settings.json env: GITHUB_MCP_PAT=$settings_pat  AGENTMAIL_API_KEY=$settings_mail  CLOUDFLARE=$settings_cf"
 
 if [ "$env_has_pat" = "yes" ] && [ "$env_has_mail" = "yes" ]; then
   echo "  Full identity loaded; MCP tools (github, agentmail) should have env."
