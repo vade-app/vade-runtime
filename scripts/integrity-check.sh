@@ -1169,6 +1169,84 @@ else
   _add F6 skip "requires $F_REPO/bin/external-touch.py + coo + python3"
 fi
 
+# ── F8 — Framed-as-caution auditor (dark-accumulation pole, sub-cond 3) ─
+# F5 sub-condition 3 of disposition-proposal §5 (lines 285-289): auditor-
+# agent corpus pass over retrospectives and memos detecting "framed as
+# caution" patterns — perpetual non-externalization presented as
+# principled restraint without the principle stated, or with a principle
+# that would dissolve under scrutiny. Per coo/plans/2026-05-10_f4-f5-
+# completion.md §6 Phase 2 + coo/instruments/framed-as-caution.md §6.
+#
+# Runs bin/framed-as-caution.py against coo/retrospectives/ + coo/memos/
+# (foundations excluded — covered by F4 / integrity-check F5) and fires
+# when the count of artifacts with strong (non-borderline) framed-as-
+# caution findings rises above the calibrated threshold.
+#
+# Numbering note: integrity-check.sh F1-F4 are PR-citation, memo-
+# retirement, essay-companion, attribution-coverage. F5-F8 extend the
+# script's F-series numerically; the disposition-proposal F1-F7 audit
+# poles are a SEPARATE numbering axis. F8 here implements disposition-
+# proposal F5 sub-condition 3 (where F5 here implemented disposition-
+# proposal F4 sub-condition 1 and F6 implemented F5 sub-condition 1).
+# F7 is reserved for fresh-boot reading-test cadence per
+# coo/instruments/fresh-boot-reading-test.md §6 if/when it lands as an
+# invariant; F9 is reserved for the future section-positioning v2
+# (disposition-proposal F4 sub-condition 2) per the F4/F5 plan §6 Phase 3.
+#
+# Signal-shape, not gate-shape: a fired F8 means "investigate; the
+# corpus has accumulated framed-as-caution language above baseline,"
+# not "block." The disposition-proposal §6 names gate-shape watchdogs
+# as themselves a substrate-capture vector; F8 honors that explicitly.
+#
+# Threshold revisable by env: VADE_FRAMED_AS_CAUTION_THRESHOLD.
+# Initial threshold TBD by first 3 quarterly runs per
+# coo/instruments/framed-as-caution.md §4 — calibration on first run
+# is a separate dispatch from the tooling-ship PR.
+F8_SCRIPT="$F_REPO/bin/framed-as-caution.py"
+F8_THRESHOLD="${VADE_FRAMED_AS_CAUTION_THRESHOLD:-0}"
+if [ -f "$F8_SCRIPT" ] \
+   && [ -d "$F_REPO/coo/retrospectives" ] \
+   && [ -d "$F_REPO/coo/memos" ] \
+   && check_cmd python3; then
+  f8_tmp_err=$(mktemp 2>/dev/null || echo "/tmp/vade-f8-$$.err")
+  f8_tmp_out=$(mktemp 2>/dev/null || echo "/tmp/vade-f8-$$.out")
+  python3 "$F8_SCRIPT" --corpus "$F_REPO/coo" --json --threshold "$F8_THRESHOLD" \
+    >"$f8_tmp_out" 2>"$f8_tmp_err"
+  f8_rc=$?
+  if [ "$f8_rc" -eq 0 ]; then
+    f8_count=$(python3 -c "
+import json, sys
+try:
+  recs = json.load(open('$f8_tmp_out'))
+  strong = sum(1 for r in recs if any(ev.get('borderline_reason') is None for ev in r.get('evidence', [])))
+  border = sum(1 for r in recs if r['framed_as_caution'] and not any(ev.get('borderline_reason') is None for ev in r.get('evidence', [])))
+  print(f'{strong}|{border}|{len(recs)}')
+except Exception as e:
+  print(f'?|?|?')
+" 2>/dev/null)
+    f8_strong=$(echo "$f8_count" | cut -d'|' -f1)
+    f8_border=$(echo "$f8_count" | cut -d'|' -f2)
+    f8_total=$(echo "$f8_count" | cut -d'|' -f3)
+    _add F8 true "${f8_strong:-0} flagged framed-as-caution (strong), ${f8_border:-0} borderline-only, across ${f8_total:-?} artifacts (threshold $F8_THRESHOLD)"
+  elif [ "$f8_rc" -eq 1 ]; then
+    f8_offenders=$(python3 -c "
+import json
+try:
+  recs = json.load(open('$f8_tmp_out'))
+  flagged = [r['path'] for r in recs if any(ev.get('borderline_reason') is None for ev in r.get('evidence', []))]
+  print(','.join(p.rsplit('/', 1)[-1] for p in flagged[:3]))
+except Exception:
+  print('')
+" 2>/dev/null)
+    _add F8 false "framed-as-caution count above threshold $F8_THRESHOLD: ${f8_offenders:-unknown}"
+  else
+    _add F8 skip "framed-as-caution.py exited rc=$f8_rc"
+  fi
+  rm -f "$f8_tmp_err" "$f8_tmp_out"
+else
+  _add F8 skip "requires $F_REPO/bin/framed-as-caution.py + coo/retrospectives + coo/memos + python3"
+fi
+
 # ── Serialize ────────────────────────────────────────────────
 mkdir -p "$VADE_CLOUD_STATE_DIR" 2>/dev/null || true
 
