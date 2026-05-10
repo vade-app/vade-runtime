@@ -115,6 +115,19 @@ def emit(m):
     labels = m.get('labels', []) or []
     if 'received' not in labels:
         return
+    sender = m.get('from') or ''
+    # Suppress GitHub notification mirrors that arrive in the agentmail
+    # inbox via coo@vade-app.dev forwarding. They are too frequent to be
+    # useful as event signal — PR / issue activity has its own webhook
+    # primitive (mcp__github__subscribe_pr_activity). The same exclusion
+    # also covers `noreply.github.com` and `reply.github.com` for
+    # robustness across header variants.
+    if any(s in sender for s in (
+        'notifications@github.com',
+        '@noreply.github.com',
+        '@reply.github.com',
+    )):
+        return
     preview = (m.get('preview') or '').replace('\n', ' ').strip()
     if len(preview) > 140:
         preview = preview[:137] + '...'
