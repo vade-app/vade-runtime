@@ -48,8 +48,8 @@
       "id": "gh-classic-pat",
       "regex": "\\bghp_[A-Za-z0-9]{36}\\b",
       "replacement": "[REDACTED:gh-classic-pat]",
-      "secret_var": null,
-      "notes": "GitHub classic PAT, 40 chars total."
+      "secret_var": "GITHUB_PUBLIC_PAT",
+      "notes": "GitHub classic PAT, 40 chars total. GITHUB_PUBLIC_PAT (MEMO-2026-05-11-6xv2) is exported under this shape; gh-coo-wrap routes cross-org public-repo writes through it."
     },
     {
       "id": "gh-oauth-u2s",
