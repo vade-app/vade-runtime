@@ -58,6 +58,47 @@ sid="${CLAUDE_CODE_REMOTE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 SESSION_URL=""
 [ -n "$sid" ] && SESSION_URL="https://claude.ai/code/session_${sid#cse_}"
 
+# PAT routing for cross-org public-repo writes (MEMO-2026-05-11-6xv2).
+# `$GITHUB_MCP_PAT` is fine-grained, scoped to vade-app/* — the default
+# bounded write surface. `$GITHUB_PUBLIC_PAT` is a classic PAT with
+# `public_repo` scope, provisioned for writes to public repos outside
+# vade-app/* (anthropics/claude-code, upstream skill repos, etc).
+#
+# Routing: if --repo <owner>/<name> is in argv and owner != vade-app
+# AND $GITHUB_PUBLIC_PAT is set, swap GH_TOKEN to the public PAT for
+# this invocation. vade-app/* and no-explicit-repo invocations pass
+# through unchanged.
+extract_owner() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo|-R)
+        shift
+        if [ $# -gt 0 ]; then
+          printf '%s' "${1%%/*}"
+          return 0
+        fi
+        ;;
+      --repo=*)
+        repo="${1#--repo=}"
+        printf '%s' "${repo%%/*}"
+        return 0
+        ;;
+      -R=*)
+        repo="${1#-R=}"
+        printf '%s' "${repo%%/*}"
+        return 0
+        ;;
+    esac
+    shift
+  done
+  return 0
+}
+
+target_owner="$(extract_owner "$@")"
+if [ -n "$target_owner" ] && [ "$target_owner" != "vade-app" ] && [ -n "${GITHUB_PUBLIC_PAT:-}" ]; then
+  export GH_TOKEN="$GITHUB_PUBLIC_PAT"
+fi
+
 # Resolve issue/PR shape-check script. Advisory only; missing-tolerant.
 # Source: vade-coo-memory/bin/issue-pr-shape-check.py (lands via
 # vade-coo-memory#226). The wrapper uses the script when present;
