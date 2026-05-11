@@ -267,7 +267,9 @@
       "Bash(mkdir -p /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach)",
       "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/35c6f60f-ChatGPTiOS_integration_gaps.md\" \"analysis/source-notes/2025-10-10_ios-integration-gaps.md\")",
       "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/c0e54e4b-ChatGPTProjectbased_organization_critique.md\" \"analysis/source-notes/2025-10-27_project-based-organization-critique.md\")",
-      "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/f029a7b9-ChatGPTIdeal_Reference_Management_App.md\" \"analysis/source-notes/2025-03-24_ideal-reference-management-app.md\")"
+      "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/f029a7b9-ChatGPTIdeal_Reference_Management_App.md\" \"analysis/source-notes/2025-03-24_ideal-reference-management-app.md\")",
+      "Bash(cp \"/root/.claude/uploads/c4f327e6-160b-40d1-8a0c-c879723b0918/7c3cbb67-HeptabaseinappAIsummary.pdf\" \"/home/user/coo4one/analysis/source-notes/2026-05-11_heptabase-ai-summary.pdf\" && ls -la /home/user/coo4one/analysis/source-notes/2026-05-11_heptabase-ai-summary.pdf)",
+      "Bash(cp \"/root/.claude/uploads/c4f327e6-160b-40d1-8a0c-c879723b0918/e3068d01-localclaudecodeapplenotesHeptabasesummary.pdf\" \"/home/user/coo4one/analysis/source-notes/2026-05-11_apple-notes-heptabase-summary.pdf\" && ls -la /home/user/coo4one/analysis/source-notes/2026-05-11_apple-notes-heptabase-summary.pdf)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
