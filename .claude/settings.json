@@ -264,7 +264,10 @@
       "Bash(node -e 'const s=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/vepopo/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"enabledPlugins:\", s.enabledPlugins, \"autoMemoryEnabled:\", s.autoMemoryEnabled, \"defaultMode:\", s.permissions?.defaultMode\\)')",
       "Bash(node -e 'const s=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/vepopo/GitHub/vade-app/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"SessionStart chains:\", s.hooks?.SessionStart?.length\\)')",
       "Bash(cp \"/root/.claude/uploads/5fcbce96-b00c-4893-93ce-8b5d4957c74d/b6b51051-Why_I_am_not_a_Turing_machine.pdf\" /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach/holyoak-2024-why-i-am-not-a-turing-machine.pdf)",
-      "Bash(mkdir -p /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach)"
+      "Bash(mkdir -p /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach)",
+      "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/35c6f60f-ChatGPTiOS_integration_gaps.md\" \"analysis/source-notes/2025-10-10_ios-integration-gaps.md\")",
+      "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/c0e54e4b-ChatGPTProjectbased_organization_critique.md\" \"analysis/source-notes/2025-10-27_project-based-organization-critique.md\")",
+      "Bash(cp \"/root/.claude/uploads/fc2343ba-a2de-4533-824d-1b88aed2635b/f029a7b9-ChatGPTIdeal_Reference_Management_App.md\" \"analysis/source-notes/2025-03-24_ideal-reference-management-app.md\")"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
