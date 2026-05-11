@@ -34,6 +34,12 @@ case "${1:-}" in
       "op://COO/vade-coo-self-2026-04/token")
         echo "ghp_CIMOCK00000000000000000000000000000000"
         ;;
+      "op://COO/GITHUB_PUBLIC_PAT/credential")
+        # Mocked cross-org public-repo PAT (MEMO-2026-05-11-6xv2). Classic
+        # `ghp_` prefix; placeholder body so disk content scanners don't
+        # match a real-shape token.
+        echo "ghp_CIMOCK_PUBLIC_PAT_DO_NOT_USE_000000"
+        ;;
       "op://COO/agentmail-vade-coo/credential")
         echo "am_CIMOCK_AGENTMAIL_KEY_DO_NOT_USE"
         ;;
