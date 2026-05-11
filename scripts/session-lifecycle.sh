@@ -126,131 +126,21 @@ fi
 
 # --- end mode ---
 
-RUN_ID=""
-if [ -f "$RUN_ID_FILE" ] && [ -s "$RUN_ID_FILE" ]; then
-  RUN_ID="$(cat "$RUN_ID_FILE")"
+# Gate on marker written by the /end-session skill (vade-coo-memory).
+# The skill runs the full session-end checklist and touches this file
+# as its last step. When the marker is present, cleanup is done —
+# consume it and exit silently rather than injecting a 50-line reminder
+# into the next turn's context. When absent, emit a one-line nudge.
+# Fixes vade-app/vade-runtime#245 (Stop hook fires every turn, causing
+# per-turn context pollution).
+END_MARKER="$HOME/.vade/.end-session-done"
+if [ -f "$END_MARKER" ]; then
+  rm -f "$END_MARKER"
+  exit 0
 fi
 
-# Stop-hook context-injection: emit the checklist as a top-level
-# "systemMessage" so Claude Code surfaces it to the agent on this
-# final turn. The previous {"hookSpecificOutput":{"hookEventName":"Stop",...}}
-# envelope was invalid — "Stop" is not a recognised hookEventName in the
-# hookSpecificOutput schema (valid: PreToolUse, UserPromptSubmit,
-# PostToolUse, PostToolBatch). Capture all reminder text into a buffer,
-# then emit it as {"systemMessage":"..."} at the top level.
-END_BUF="$(mktemp -t vade-session-end.XXXXXX 2>/dev/null || mktemp)"
-{
-echo "───────────────────────────────────────────────────────────────"
-echo "Session lifecycle — end of session (SOP-MEM-001 §5)"
-echo ""
-if [ -n "$RUN_ID" ]; then
-  echo "run_id: $RUN_ID"
-  echo ""
-fi
-echo "Before the container tears down:"
-echo ""
-echo "  1. Commit any plan files worth preserving."
-echo "     Path convention: <working-repo>/.vade/plans/<slug>.md"
-echo "     Commit via git CLI if GITHUB_TOKEN is set, else via"
-echo "     GitHub MCP (create_or_update_file)."
-
-plans="$(list_plans || true)"
-if [ -n "$plans" ]; then
-  echo ""
-  echo "     Candidate files:"
-  while IFS= read -r p; do
-    [ -n "$p" ] && echo "       - $p"
-  done <<< "$plans"
-fi
-
-echo ""
-echo "  2. Write ONE episodic Mem0 entry (SOP-MEM-001 v1.1 §5):"
-echo "       user_id    = \"ven\""
-echo "       agent_id   = \"claude-code\"   # forward-compat; not indexed"
-echo "       # Do NOT pass run_id as a top-level arg — it creates a"
-echo "       # per-session RUN entity and shards cross-session recall."
-echo "       # The run_id belongs in metadata.source_session."
-if [ -n "$RUN_ID" ]; then
-  RUN_ID_FIELD="\"$RUN_ID\""
-else
-  RUN_ID_FIELD="\"<current session run_id>\""
-fi
-echo "       metadata   = { memory_type:     \"episodic\","
-echo "                      event:           \"session_summary\","
-echo "                      created_by:      \"coo\","
-echo "                      source_session:  $RUN_ID_FIELD,"
-echo "                      artifact_refs:   [\"<repo>/.vade/plans/<slug>.md@<sha>\"],"
-echo "                      retention:       \"ephemeral\","
-echo "                      expiration_date: <now + 30 days> }"
-echo ""
-echo "  3. Consider a Journal entry. Pause and ask: did anything happen"
-echo "     this session that's worth a Journal post — a pattern noticed,"
-echo "     a meta-observation about the COO or the COO ↔ Ven dynamic,"
-echo "     a thought that doesn't yet fit memo / essay / RFC? If yes,"
-echo "     scan existing Journal threads for a topic match: comment to"
-echo "     extend, or open a new thread for a separate direction. The"
-echo "     bar is low (one paragraph is fine), but the floor is honest"
-echo "     reflection — if nothing comes to mind in ~30 seconds, skip."
-echo "     Skipping is a normal outcome; forcing a post defeats the"
-echo "     purpose."
-echo "     Norms:    vade-coo-memory/coo/agent-boot-discussions-check.md §Journal"
-echo "     Category: https://github.com/vade-app/vade-core/discussions/categories/journal"
-echo ""
-echo "  4. If this session was the COO working in vade-coo-memory,"
-echo "     also write a session log to vade-agent-logs per that"
-echo "     repo's CLAUDE.md template."
-echo ""
-
-# Step 5 (conditional): the transcript-export Stop hook fires before
-# this script (settings.json hooks.Stop array order), so by now any
-# meta.json or export-error.txt sidecar is already on disk. Surface
-# the file paths so the agent commits them as part of step 4. Skip
-# the step entirely when nothing was dropped (hook missing, deps
-# missing, dry-run, etc.) — silence is the better signal than a stale
-# instruction.
-agent_logs_dir=""
-for _cand in "$HOME/GitHub/vade-app/vade-agent-logs" "/home/user/vade-agent-logs"; do
-  if [ -d "$_cand" ]; then agent_logs_dir="$_cand"; break; fi
-done
-if [ -n "$agent_logs_dir" ] && [ -d "$agent_logs_dir/transcripts" ]; then
-  recent_drops="$(find "$agent_logs_dir/transcripts" -type f \
-    \( -name '*.meta.json' -o -name '*.export-error.txt' \) \
-    -mmin -60 2>/dev/null | sort)"
-  if [ -n "$recent_drops" ]; then
-    echo "  5. The transcript-export Stop hook fired this session"
-    echo "     (vade-app/vade-agent-logs#64 Batch 2). Files in"
-    echo "     vade-agent-logs to commit alongside your session log:"
-    while IFS= read -r _f; do
-      [ -n "$_f" ] && echo "       - ${_f#"$agent_logs_dir/"}"
-    done <<< "$recent_drops"
-    echo ""
-    echo "     The redacted+encrypted ciphertext is already in R2 — the"
-    echo "     .meta.json sidecar carries the bucket+key. Sidecars are"
-    echo "     append-only; commit verbatim. If a .export-error.txt is"
-    echo "     present instead of (or alongside) a .meta.json, surface"
-    echo "     the failure in your session log so future COOs can see it."
-    echo ""
-  fi
-fi
-
-echo "Full SOP: vade-coo-memory/coo/mem0_sop.md"
-echo "───────────────────────────────────────────────────────────────"
-} > "$END_BUF"
-
-# Emit captured reminder as a Stop-hook systemMessage so Claude
-# actually sees it on the next turn. Falls back to plain stdout if
-# node is missing — strictly worse than the JSON path (Claude won't
-# see it), but the script must remain a graceful no-op when deps are
-# missing rather than aborting the Stop chain.
+# /end-session was not run. Emit a minimal one-line systemMessage so
+# the agent is reminded on the next turn without flooding the context.
 if check_cmd node; then
-  node -e '
-    const fs = require("fs");
-    const text = fs.readFileSync(process.argv[1], "utf8");
-    process.stdout.write(JSON.stringify({
-      systemMessage: text
-    }) + "\n");
-  ' "$END_BUF"
-else
-  cat "$END_BUF"
+  node -e 'process.stdout.write(JSON.stringify({systemMessage: "Session stopping. If this is the actual end of the session and you have not run /end-session, run it now to commit plans, write the Mem0 entry, and persist the session log (vade-coo-memory/CLAUDE.md §\\"When you end a session\\")."}) + "\n");'
 fi
-rm -f "$END_BUF"
