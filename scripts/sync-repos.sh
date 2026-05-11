@@ -8,7 +8,7 @@ set -u
 
 ROOT="${DEV_DIR}/vade-app"
 
-REPOS=(vade-agent-logs vade-coo-memory vade-core vade-governance vade-runtime)
+REPOS=(coo4one vade-agent-logs vade-coo-memory vade-core vade-governance vade-runtime)
 
 echo $ROOT
 

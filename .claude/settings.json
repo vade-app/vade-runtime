@@ -264,7 +264,10 @@
       "Bash(node -e 'const s=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/vepopo/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"enabledPlugins:\", s.enabledPlugins, \"autoMemoryEnabled:\", s.autoMemoryEnabled, \"defaultMode:\", s.permissions?.defaultMode\\)')",
       "Bash(node -e 'const s=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"/Users/vepopo/GitHub/vade-app/.claude/settings.json\",\"utf8\"\\)\\); console.log\\(\"SessionStart chains:\", s.hooks?.SessionStart?.length\\)')",
       "Bash(cp \"/root/.claude/uploads/5fcbce96-b00c-4893-93ce-8b5d4957c74d/b6b51051-Why_I_am_not_a_Turing_machine.pdf\" /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach/holyoak-2024-why-i-am-not-a-turing-machine.pdf)",
-      "Bash(mkdir -p /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach)"
+      "Bash(mkdir -p /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach)",
+      "Bash(flyctl secrets *)",
+      "mcp__claude_ai_Mem0__get_memories",
+      "mcp__claude_ai_Mem0__search_memories"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
