@@ -142,5 +142,5 @@ fi
 # /end-session was not run. Emit a minimal one-line systemMessage so
 # the agent is reminded on the next turn without flooding the context.
 if check_cmd node; then
-  node -e 'process.stdout.write(JSON.stringify({systemMessage: "Session stopping. If this is the actual end of the session and you have not run /end-session, run it now to commit plans, write the Mem0 entry, and persist the session log (vade-coo-memory/CLAUDE.md §\\"When you end a session\\")."}) + "\n");'
+  node -e 'process.stdout.write(JSON.stringify({systemMessage: "Session stopping. If this is the actual end of the session and /end-session was not run, run it now to commit plans, write the Mem0 entry, and persist the session log."}) + "\n");'
 fi
