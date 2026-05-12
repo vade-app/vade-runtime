@@ -34,7 +34,7 @@ fi
 CLAUDE_MD="$MEM_REPO/CLAUDE.md"
 MEMO_INDEX="$MEM_REPO/coo/memo_index.json"
 BOOTSTRAP_LOG="${HOME}/.vade/coo-bootstrap.log"
-SETTINGS_FILE="${HOME}/.claude/settings.json"
+SETTINGS_FILE="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"
 WORKSPACE_IDENTITY_LINK="$WORKSPACE_ROOT/CLAUDE.md"
 WORKSPACE_MCP_LINK="$WORKSPACE_ROOT/.mcp.json"
 WORKSPACE_MCP_SRC="$WORKSPACE_ROOT/vade-runtime/.mcp.json"

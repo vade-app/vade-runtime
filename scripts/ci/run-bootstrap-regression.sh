@@ -155,6 +155,15 @@ log "Running scripts/session-start-sync.sh"
 # Tag the integrity-check report with a CI-flavored session id so any
 # operator triaging the artifact can tell it's not a real session.
 export CLAUDE_CODE_SESSION_ID="ci-bootstrap-regression-${GITHUB_RUN_ID:-local}"
+# Simulate Claude Code's resume behavior: at session-start, Claude Code
+# reads settings.json.env and exports those keys into its own process
+# env, where hook subprocesses (session-start-sync, coo-bootstrap, etc.)
+# inherit them. cloud-setup.sh runs in a separate shell whose runtime
+# export of VADE_COO_MODE=1 does not survive into this stage; the
+# persisted settings.json.env is the durable carrier. Without this the
+# COO-mode-gated writers in lib/common.sh early-exit and D-group
+# invariants (D4) degrade.
+export VADE_COO_MODE=1
 bash "$RUNTIME_DST/scripts/session-start-sync.sh"
 
 # Run integrity-check.sh explicitly. In live sessions this is called by

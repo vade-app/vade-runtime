@@ -13,6 +13,15 @@
 # /home/user/ before this runs, so we just point at /home/user/vade-runtime.
 set -euo pipefail
 
+# The cloud snapshot IS the COO session by construction. Export
+# VADE_COO_MODE=1 so coo-bootstrap and the merge_coo_settings_* writers
+# in lib/common.sh fire normally. On Ven's local Mac the analogous flag
+# is set only by the `claude-coo` zsh wrapper, gating COO-mode writes
+# to opt-in sessions and leaving bare `claude` launches untouched —
+# even when fired from inside the vade-app workspace where project-
+# scope hooks would otherwise re-trigger the COO pipeline.
+export VADE_COO_MODE=1
+
 # Derive workspace root from script location so the bootstrap-regression
 # CI (.github/workflows/bootstrap-regression.yml) can stage a sandboxed
 # /tmp/<root>/vade-runtime tree without colliding with the production
