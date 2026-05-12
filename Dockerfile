@@ -15,7 +15,11 @@ ARG USERNAME=node
 # for the uv-managed mem0-mcp-server install below, age for at-rest
 # encryption of session transcripts uploaded by the Stop hook
 # (vade-app/vade-agent-logs#64 Batch 2; recipient pubkey at
-# scripts/lib/transcripts-recipient.age, identity in 1Password).
+# scripts/lib/transcripts-recipient.age, identity in 1Password),
+# poppler-utils for `pdftoppm` (PDF→PNG extraction used by the
+# notebooklm-pipeline skill's slide-deck post-processing step;
+# libpoppler134 ships transitively with other deps but the CLI
+# tools require the explicit utils package).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
       ca-certificates \
@@ -27,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       python3-venv \
       age \
+      poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # 1Password CLI — pinned in versions.lock. Baked at image-build time so
