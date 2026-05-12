@@ -22,8 +22,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Mock gh-real: dump its argv, one per line, to stdout. For
 # --body-file we also dump the file contents marked with FILE-CONTENT:.
+# Also prints GH_TOKEN so routing-layer tests can assert which PAT
+# the wrapper selected for this invocation.
 cat > "$WORK/gh-real" <<'EOF'
 #!/usr/bin/env bash
+printf 'GH_TOKEN=%s\n' "${GH_TOKEN:-<unset>}"
 i=0
 for a in "$@"; do
   i=$((i+1))
@@ -213,6 +216,110 @@ else
   printf '  FAIL  missing real binary: exit %s, expected 127\n' "$ec"
   printf '         stderr: %s\n' "$err"
 fi
+
+# ============================================================
+# PAT routing tests (MEMO-2026-05-11-6xv2 + MEMO-2026-05-12-22m9).
+# ============================================================
+# These tests assert which PAT the wrapper exports as GH_TOKEN
+# based on the target repo owner. The mock prints GH_TOKEN as its
+# first output line; tests assert that prefix.
+
+export GITHUB_MCP_PAT="MCP_PAT_TESTING"
+export GITHUB_PUBLIC_PAT="PUBLIC_PAT_TESTING"
+export GH_TOKEN="MCP_PAT_TESTING"  # default state at session start
+
+printf '\nPAT routing tests:\n'
+
+# --- vade-app/* (MCP PAT, no swap) ---
+
+# Existing --repo flag form, vade-app — no swap
+out="$("$WRAPPER" --repo vade-app/foo pr comment 1 --body "x")"
+assert_contains "vade-app via --repo: keeps MCP_PAT" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# Positional repo arg, vade-app — no swap (new coverage)
+out="$("$WRAPPER" repo view vade-app/foo)"
+assert_contains "gh repo view vade-app/foo: keeps MCP_PAT" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# gh api repos/vade-app/...
+out="$("$WRAPPER" api repos/vade-app/foo/issues)"
+assert_contains "gh api repos/vade-app: keeps MCP_PAT" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# gh api orgs/vade-app
+out="$("$WRAPPER" api orgs/vade-app/repos)"
+assert_contains "gh api orgs/vade-app: keeps MCP_PAT" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# --- non-vade-app (PUBLIC PAT swap) ---
+
+# Existing --repo flag form, non-vade-app — swaps
+out="$("$WRAPPER" --repo venpopov/foo pr comment 1 --body "x")"
+assert_contains "venpopov via --repo: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh repo fork positional (the failure case that motivated this PR)
+out="$("$WRAPPER" repo fork venpopov/foo)"
+assert_contains "gh repo fork venpopov/foo: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+out="$("$WRAPPER" repo fork anthropics/claude-code --org vade-coo)"
+assert_contains "gh repo fork anthropics/... --org vade-coo: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh repo create non-vade-app
+out="$("$WRAPPER" repo create venpopov/new-repo --public)"
+assert_contains "gh repo create venpopov/new-repo: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh repo clone with HTTPS URL
+out="$("$WRAPPER" repo clone https://github.com/anthropics/foo)"
+assert_contains "gh repo clone https URL: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh repo clone with SSH URL
+out="$("$WRAPPER" repo clone git@github.com:anthropics/foo)"
+assert_contains "gh repo clone SSH URL: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh api repos/<non-vade-app>/...
+out="$("$WRAPPER" api repos/anthropics/claude-code/issues)"
+assert_contains "gh api repos/anthropics/...: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh api repos/<non-vade-app>/.../forks (the today fork failure case)
+out="$("$WRAPPER" api -X POST repos/venpopov/foo/forks)"
+assert_contains "gh api -X POST repos/venpopov/.../forks: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh api orgs/<non-vade-app>
+out="$("$WRAPPER" api orgs/anthropics/repos)"
+assert_contains "gh api orgs/anthropics: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh api users/<non-vade-app>
+out="$("$WRAPPER" api users/octocat)"
+assert_contains "gh api users/octocat: swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# gh api with leading slash on path
+out="$("$WRAPPER" api /repos/anthropics/foo)"
+assert_contains "gh api /repos/... (leading slash): swaps to PUBLIC_PAT" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# --- template/flag-value disambiguation ---
+
+# gh repo create --template anthropics/foo vade-app/new — must pick vade-app, not anthropics
+out="$("$WRAPPER" repo create --template anthropics/foo vade-app/new --public)"
+assert_contains "gh repo create --template foreign/X vade-app/Y: keeps MCP_PAT (target wins)" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# Symmetric: --template vade-app/foo venpopov/new — must pick venpopov, swap
+out="$("$WRAPPER" repo create --template vade-app/foo venpopov/new --public)"
+assert_contains "gh repo create --template vade-app/X venpopov/Y: swaps to PUBLIC_PAT (target wins)" "$out" "GH_TOKEN=PUBLIC_PAT_TESTING"
+
+# --- GITHUB_PUBLIC_PAT unset: no override even for non-vade-app ---
+
+out="$(env -u GITHUB_PUBLIC_PAT GITHUB_MCP_PAT="$GITHUB_MCP_PAT" GH_TOKEN="$GH_TOKEN" CLAUDE_CODE_REMOTE_SESSION_ID="$CLAUDE_CODE_REMOTE_SESSION_ID" COO_GH_REAL="$WORK/gh-real" "$WRAPPER" repo fork venpopov/foo)"
+assert_contains "GITHUB_PUBLIC_PAT unset: no swap, keeps MCP_PAT" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# --- uncovered subcommands: no swap ---
+
+# gh repo list (action not in our list) — no routing fires
+out="$("$WRAPPER" repo list venpopov)"
+# Note: 'venpopov' here is the *owner argument* to `gh repo list`; we
+# deliberately don't extract from `gh repo list` since its positional
+# is owner-only (not owner/name). MCP_PAT remains.
+assert_contains "gh repo list <owner>: keeps MCP_PAT (uncovered action)" "$out" "GH_TOKEN=MCP_PAT_TESTING"
+
+# gh release create (uncovered) — no swap
+out="$("$WRAPPER" release create v1.0.0)"
+assert_contains "gh release create: keeps MCP_PAT (uncovered)" "$out" "GH_TOKEN=MCP_PAT_TESTING"
 
 printf '\n'
 printf 'Total: %d pass, %d fail\n' "$PASS" "$FAIL"

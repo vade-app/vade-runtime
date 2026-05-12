@@ -127,13 +127,7 @@ main() {
     return "$rc"
   fi
 
-  if [ -z "${GITHUB_MCP_PAT:-}" ]; then
-    log_err "git proxy push failed but GITHUB_MCP_PAT is unset; cannot fall back"
-    log_err "  run scripts/coo-bootstrap.sh (or source ~/.vade/coo-env) to populate it"
-    return "$rc"
-  fi
-
-  local remote current_url repo_path
+  local remote current_url repo_path repo_owner
   remote="$(resolve_remote_from_args "$@")"
   if ! current_url="$(git remote get-url "$remote" 2>/dev/null)" || [ -z "$current_url" ]; then
     log_err "could not resolve remote '$remote'; not falling back"
@@ -150,10 +144,32 @@ main() {
     log_err "could not extract owner/repo from '$current_url'; not falling back"
     return "$rc"
   fi
+  repo_owner="${repo_path%%/*}"
 
-  local direct_url="https://vade-coo:${GITHUB_MCP_PAT}@github.com/${repo_path}.git"
-  local masked_url="https://vade-coo:***@github.com/${repo_path}.git"
-  log_err "git proxy push failed; retrying via $masked_url"
+  # PAT selection by remote owner (MEMO-2026-05-12-22m9). vade-app/*
+  # remotes use the fine-grained MCP PAT (default write surface);
+  # other remotes use the classic public-repo PAT when available.
+  # Mirrors the gh-coo-wrap routing layer for symmetric coverage —
+  # `git push` to a fork at venpopov/foo would otherwise fall back
+  # with the wrong PAT and re-403.
+  local fallback_pat fallback_pat_name fallback_user
+  if [ "$repo_owner" != "vade-app" ] && [ -n "${GITHUB_PUBLIC_PAT:-}" ]; then
+    fallback_pat="$GITHUB_PUBLIC_PAT"
+    fallback_pat_name="GITHUB_PUBLIC_PAT"
+    fallback_user="vade-coo"
+  elif [ -n "${GITHUB_MCP_PAT:-}" ]; then
+    fallback_pat="$GITHUB_MCP_PAT"
+    fallback_pat_name="GITHUB_MCP_PAT"
+    fallback_user="vade-coo"
+  else
+    log_err "git proxy push failed but no GitHub PAT is set (GITHUB_MCP_PAT, GITHUB_PUBLIC_PAT); cannot fall back"
+    log_err "  run scripts/coo-bootstrap.sh (or source ~/.vade/coo-env) to populate them"
+    return "$rc"
+  fi
+
+  local direct_url="https://${fallback_user}:${fallback_pat}@github.com/${repo_path}.git"
+  local masked_url="https://${fallback_user}:***@github.com/${repo_path}.git"
+  log_err "git proxy push failed; retrying via $masked_url (using $fallback_pat_name)"
 
   # Build fallback args: substitute direct_url for the remote token, and
   # drop -u / --set-upstream (the upstream-tracking config gets written
