@@ -215,6 +215,20 @@ else
   log "Warning: poppler-utils install failed at build time; notebooklm-pipeline Step 7 (slide-deck PDF→PNG) will skip on use."
 fi
 
+# Pre-install notebooklm-py for the notebooklm-pipeline skill. Without
+# this, the wrapper's `_ensure_pip_package("notebooklm-py[browser]", ...)`
+# runs on every fresh snapshot's first invocation, adding ~5–10 s of
+# pip latency + noisy stderr (including "Running pip as root" warnings)
+# before any user-visible work. Chromium itself is already pre-baked at
+# /opt/pw-browsers via image-level PLAYWRIGHT_BROWSERS_PATH, so this
+# only needs to land the Python package.
+if ensure_notebooklm_py; then
+  build_log_record OK "cloud-setup: notebooklm-py installed at build time"
+else
+  build_log_record WARN "cloud-setup: notebooklm-py install failed at build time; first session will pay the install latency"
+  log "Warning: notebooklm-py install failed at build time; notebooklm-pipeline skill will install on first use."
+fi
+
 # Pre-fetch the 1Password MCP server (@takescake/1password-mcp) into the
 # global npm cache so first-session `npx -y` resolves offline. Same
 # snapshot-persistence rationale as op + gh + mem0 — paying the npm
