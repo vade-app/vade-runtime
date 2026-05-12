@@ -66,6 +66,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" bash-token-guard"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/vade-hooks/dispatch.sh\" bash-github-api-guard"
           }
         ]
       }
@@ -267,7 +271,8 @@
       "Bash(mkdir -p /home/user/vade-coo-memory/coo/_drafts/2026-05-10_f1-outreach)",
       "Bash(flyctl secrets *)",
       "mcp__claude_ai_Mem0__get_memories",
-      "mcp__claude_ai_Mem0__search_memories"
+      "mcp__claude_ai_Mem0__search_memories",
+      "Bash(cp /home/user/vade-runtime/.claude/settings.json /home/user/.claude/settings.json && diff /home/user/.claude/settings.json /home/user/vade-runtime/.claude/settings.json && echo \"sync OK\")"
     ],
     "deny": [
       "Bash(rm -rf /:*)",

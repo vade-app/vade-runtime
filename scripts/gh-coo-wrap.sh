@@ -58,16 +58,39 @@ sid="${CLAUDE_CODE_REMOTE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 SESSION_URL=""
 [ -n "$sid" ] && SESSION_URL="https://claude.ai/code/session_${sid#cse_}"
 
-# PAT routing for cross-org public-repo writes (MEMO-2026-05-11-6xv2).
+# PAT routing for cross-org public-repo writes (MEMO-2026-05-11-6xv2,
+# expanded by MEMO-2026-05-12-22m9 — coverage extension to positional
+# repo args and `gh api` URL paths).
+#
 # `$GITHUB_MCP_PAT` is fine-grained, scoped to vade-app/* — the default
 # bounded write surface. `$GITHUB_PUBLIC_PAT` is a classic PAT with
 # `public_repo` scope, provisioned for writes to public repos outside
 # vade-app/* (anthropics/claude-code, upstream skill repos, etc).
 #
-# Routing: if --repo <owner>/<name> is in argv and owner != vade-app
+# Routing: if any covered surface in argv names an owner != vade-app
 # AND $GITHUB_PUBLIC_PAT is set, swap GH_TOKEN to the public PAT for
-# this invocation. vade-app/* and no-explicit-repo invocations pass
+# this invocation. vade-app/* and unrecognized-shape invocations pass
 # through unchanged.
+#
+# Covered surfaces:
+#   1. `--repo <owner>/<name>` / `-R <owner>/<name>` flag form
+#      → extract_owner (the original layer).
+#   2. Positional `<owner>/<name>` after the action of
+#      `gh repo {fork,create,clone,view,sync,rename,archive,delete,
+#                edit,set-default,deploy-key,unarchive}`
+#      → extract_owner_positional.
+#   3. URL path after `gh api`:
+#        repos/<owner>/<repo>[/...]   → <owner>
+#        orgs/<owner>[/...]           → <owner>
+#        users/<owner>[/...]          → <owner>
+#      → extract_owner_positional.
+#
+# False-positive bound (template repo case): on
+# `gh repo create --template owner-a/foo owner-b/new`, naive scanning
+# picks owner-a, but `--template` is treated as value-taking below so
+# the positional resolves to owner-b. The flag-value allowlist
+# (__gh_valued_flag) is conservative; unknown flags are treated as
+# boolean (their next arg is treated as positional).
 extract_owner() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -94,7 +117,135 @@ extract_owner() {
   return 0
 }
 
+# __gh_valued_flag: returns 0 iff $1 is a known gh flag that consumes
+# the next arg as its value. Conservative — false-negative (treating a
+# valued flag as boolean) can mis-route in rare template/source cases;
+# false-positive (treating a boolean as valued) skips an arg silently.
+__gh_valued_flag() {
+  case "$1" in
+    -X|--method|-H|--header|-F|--field|-f|--raw-field|-q|--jq|\
+    -t|--template|--input|--hostname|--cache|--description|\
+    --gitignore|--license|--homepage|--remote|--source|--team|\
+    --org|--clone-into|--fork-name|--remote-name|--target-name|\
+    --upstream-remote-name|--default-branch|--add-topic|\
+    --remove-topic|--include|--exclude|--limit|--label|--assignee|\
+    --milestone|--project|--draft|--head|--base|--reviewer|--body|\
+    --body-file|--title|--editor|--message|--from|--to)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# extract_owner_positional: positional + URL-path forms not covered by
+# extract_owner. Returns owner on match, empty on no-match (caller is
+# expected to fall through).
+extract_owner_positional() {
+  # Skip leading global flags before the subcommand. gh accepts a small
+  # set here (--hostname, --help, --version); --repo / -R is also valid
+  # pre-subcommand but already handled by extract_owner.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --hostname)
+        shift; [ $# -gt 0 ] && shift ;;
+      --hostname=*) shift ;;
+      --help|-h|--version) shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+
+  [ $# -gt 0 ] || return 0
+  local sub="$1"; shift
+
+  if [ "$sub" = "api" ]; then
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --*=*) shift ;;
+        --*|-*)
+          if __gh_valued_flag "$1"; then
+            shift; [ $# -gt 0 ] && shift
+          else
+            shift
+          fi
+          ;;
+        *)
+          local path="${1#/}"
+          case "$path" in
+            repos/*/*)
+              path="${path#repos/}"
+              printf '%s' "${path%%/*}"
+              return 0
+              ;;
+            orgs/*)
+              path="${path#orgs/}"
+              printf '%s' "${path%%/*}"
+              return 0
+              ;;
+            users/*)
+              path="${path#users/}"
+              printf '%s' "${path%%/*}"
+              return 0
+              ;;
+          esac
+          return 0
+          ;;
+      esac
+    done
+    return 0
+  fi
+
+  if [ "$sub" = "repo" ]; then
+    [ $# -gt 0 ] || return 0
+    local act="$1"; shift
+    case "$act" in
+      fork|create|clone|view|sync|rename|archive|delete|edit|set-default|deploy-key|unarchive)
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --*=*) shift ;;
+            --*|-*)
+              if __gh_valued_flag "$1"; then
+                shift; [ $# -gt 0 ] && shift
+              else
+                shift
+              fi
+              ;;
+            *)
+              case "$1" in
+                https://github.com/*/*)
+                  local v="${1#https://github.com/}"
+                  printf '%s' "${v%%/*}"
+                  return 0
+                  ;;
+                http://github.com/*/*)
+                  local v="${1#http://github.com/}"
+                  printf '%s' "${v%%/*}"
+                  return 0
+                  ;;
+                git@github.com:*/*)
+                  local v="${1#git@github.com:}"
+                  printf '%s' "${v%%/*}"
+                  return 0
+                  ;;
+                http://*|https://*|git@*|ssh://*)
+                  shift; continue ;;
+                */*)
+                  printf '%s' "${1%%/*}"
+                  return 0
+                  ;;
+              esac
+              shift
+              ;;
+          esac
+        done
+        ;;
+    esac
+  fi
+
+  return 0
+}
+
 target_owner="$(extract_owner "$@")"
+[ -z "$target_owner" ] && target_owner="$(extract_owner_positional "$@")"
 if [ -n "$target_owner" ] && [ "$target_owner" != "vade-app" ] && [ -n "${GITHUB_PUBLIC_PAT:-}" ]; then
   export GH_TOKEN="$GITHUB_PUBLIC_PAT"
 fi
