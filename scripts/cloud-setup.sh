@@ -201,6 +201,20 @@ else
   log "Warning: quarto install failed at build time; first session that uses it will pay a ~131 MB direct-fetch."
 fi
 
+# Install poppler-utils for `pdftoppm` (PDF→PNG extraction). Used by
+# the notebooklm-pipeline skill's Step 7 to extract per-page PNGs from
+# generated slide-deck PDFs for embed-ready review. Base cloud image
+# ships libpoppler134 transitively but not the CLI tools, so without
+# this install the skill's slide-deck post-processing fails mid-run
+# with "command not found". Cheap and idempotent — pay once at
+# snapshot bake.
+if ensure_poppler_utils; then
+  build_log_record OK "cloud-setup: poppler-utils installed at build time"
+else
+  build_log_record WARN "cloud-setup: poppler-utils install failed at build time; notebooklm-pipeline slide-deck post-processing will be skipped"
+  log "Warning: poppler-utils install failed at build time; notebooklm-pipeline Step 7 (slide-deck PDF→PNG) will skip on use."
+fi
+
 # Pre-fetch the 1Password MCP server (@takescake/1password-mcp) into the
 # global npm cache so first-session `npx -y` resolves offline. Same
 # snapshot-persistence rationale as op + gh + mem0 — paying the npm

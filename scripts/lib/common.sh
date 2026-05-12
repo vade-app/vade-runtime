@@ -1845,6 +1845,38 @@ ensure_openssh_client() {
   return 1
 }
 
+# Ensure poppler-utils is present (provides pdftoppm / pdftotext /
+# pdfinfo). pdftoppm is used by the notebooklm-pipeline skill's Step 7
+# to extract per-page PNGs from generated slide-deck PDFs for embed-
+# ready review. The base cloud image ships libpoppler134 transitively
+# but not the CLI tools, so absent this install the slide-deck post-
+# processing step fails with "command not found" mid-skill — surfacing
+# the friction late rather than at snapshot-build time.
+# Returns 0 if available (or successfully installed), 1 otherwise.
+ensure_poppler_utils() {
+  if check_cmd pdftoppm; then
+    return 0
+  fi
+  if ! check_cmd apt-get; then
+    log "poppler-utils missing and apt-get unavailable; slide-deck PDF→PNG extraction will be skipped"
+    return 1
+  fi
+  log "Installing poppler-utils (provides pdftoppm for notebooklm-pipeline slide-deck post-processing)"
+  if sudo -n true 2>/dev/null; then
+    sudo apt-get update -qq >/dev/null 2>&1 || true
+    sudo apt-get install -y --no-install-recommends poppler-utils >/dev/null 2>&1
+  else
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y --no-install-recommends poppler-utils >/dev/null 2>&1
+  fi
+  if check_cmd pdftoppm; then
+    log "poppler-utils installed"
+    return 0
+  fi
+  log "poppler-utils install failed (no sudo or apt denied); slide-deck PDF→PNG extraction will be skipped"
+  return 1
+}
+
 # Compute ssh-key fingerprint from a pubkey file. Returns empty on
 # failure. Wraps the pipeline so we can call it without tripping
 # pipefail/set -e in the caller.
