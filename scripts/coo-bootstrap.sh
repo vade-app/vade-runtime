@@ -35,6 +35,22 @@ _on_exit() {
 }
 trap _on_exit EXIT
 
+# Defense-in-depth: coo-bootstrap is a no-op outside an explicit COO
+# session. cloud-setup.sh exports VADE_COO_MODE=1 once for the lifetime
+# of the cloud snapshot; the local `claude-coo` zsh wrapper exports it
+# on Ven's Mac only when explicitly invoked. Outside those contexts —
+# bare `claude` from any cwd, including from inside the vade-app
+# workspace where project-scope hooks would otherwise fire this chain —
+# the entire bootstrap pipeline (gitconfig write, secret fetch,
+# settings.json merge) early-exits without touching the user's state.
+if [ "${VADE_COO_MODE:-0}" != "1" ]; then
+  log "coo-bootstrap: VADE_COO_MODE!=1; skipping COO bootstrap entirely."
+  COO_BOOTSTRAP_STEP="skip-no-coo-mode"
+  bootstrap_log_record SKIP "VADE_COO_MODE!=1"
+  trap - EXIT
+  exit 0
+fi
+
 # Ensure baseline COO identity in gitconfig BEFORE any early-exit gate.
 # Signing keys and full-fidelity gitconfig still gated behind
 # write_coo_gitconfig (which needs OP_SERVICE_ACCOUNT_TOKEN). This minimal
@@ -44,6 +60,18 @@ trap _on_exit EXIT
 COO_BOOTSTRAP_STEP="ensure_coo_identity_minimal"
 GC="${VADE_COO_GITCONFIG:-${HOME}/.gitconfig}"
 mkdir -p "$(dirname "$GC")"
+# Belt-and-suspenders guard: refuse to overwrite a gitconfig owned by
+# someone other than COO. Catches the case where VADE_COO_MODE=1 leaks
+# into a context (manual debugging, future regression in the wrapper)
+# where VADE_COO_GITCONFIG is unset and GC defaults to a personal
+# $HOME/.gitconfig. No-op on cloud (fresh snapshot has empty gitconfig).
+existing_email="$(git config --file "$GC" --get user.email 2>/dev/null || true)"
+if [ -n "$existing_email" ] && [ "$existing_email" != "coo@vade-app.dev" ]; then
+  log "coo-bootstrap: refusing to overwrite $GC (existing user.email=$existing_email is not COO)"
+  bootstrap_log_record SKIP "refused to overwrite non-COO gitconfig $GC"
+  trap - EXIT
+  exit 0
+fi
 git config --file "$GC" user.name "COO"
 git config --file "$GC" user.email "coo@vade-app.dev"
 
@@ -73,7 +101,7 @@ fi
 COO_ENV_FILE="${HOME}/.vade/coo-env"
 COO_BOOT_MARKER="${HOME}/.vade/.coo-bootstrap-done"
 _settings_env_complete() {
-  local settings="${HOME}/.claude/settings.json"
+  local settings="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"
   [ -f "$settings" ] || return 1
   check_cmd node || return 0  # node missing: fall back to marker-only trust
   node -e '

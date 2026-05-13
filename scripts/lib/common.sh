@@ -349,7 +349,7 @@ install_deps() {
 # both files exist; otherwise we fall back to a plain copy.
 sync_claude_config() {
   local src="${1:-/home/user/vade-runtime/.claude}"
-  local dst="${2:-$HOME/.claude}"
+  local dst="${2:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
   if [ ! -d "$src" ]; then
     log "sync_claude_config: source $src missing; skipping"
     return 0
@@ -1568,6 +1568,13 @@ merge_coo_settings_runtime_dir() {
 # Both are only exported when the corresponding filesystem path
 # exists, so this is a no-op outside the Claude cloud image.
 _write_claude_settings_env() {
+  # Defense-in-depth gate: only fire inside an explicit COO session.
+  # cloud-setup.sh exports VADE_COO_MODE=1 for the snapshot lifetime;
+  # the local `claude-coo` wrapper exports it on Ven's Mac. Outside
+  # those contexts (bare `claude` from anywhere, including project-
+  # scope hook firings from vade-app on local), this writer no-ops so
+  # it cannot contaminate the user's personal ~/.claude/settings.json.
+  [ "${VADE_COO_MODE:-0}" = "1" ] || return 0
   local pat="$1" agentmail="$2" mem0="$3" vade_auth_token="${4:-}"
   local r2_access_key_id="${5:-}" r2_secret_access_key="${6:-}" age_identity="${7:-}"
   local vade_bearer_token="${8:-}" vade_mcp_url="${9:-}"
@@ -1577,7 +1584,7 @@ _write_claude_settings_env() {
     log "Warning: node missing; skipping ~/.claude/settings.json env merge"
     return 0
   fi
-  local settings_dir="${HOME}/.claude"
+  local settings_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
   [ -f "$settings_file" ] || echo '{}' > "$settings_file"
@@ -1607,6 +1614,11 @@ _write_claude_settings_env() {
       process.exit(1);
     }
     const merged = Object.assign({}, cfg.env || {});
+    // Persist VADE_COO_MODE=1 so SessionStart hooks on subsequent
+    // resumes inherit it from settings.json.env. Without this, the
+    // runtime export from cloud-setup.sh is one-shot and every cloud
+    // resume would early-exit coo-bootstrap plus the merge writers.
+    merged.VADE_COO_MODE = "1";
     if (process.env.GITHUB_MCP_PAT) {
       merged.GITHUB_MCP_PAT = process.env.GITHUB_MCP_PAT;
       merged.GITHUB_TOKEN = process.env.GITHUB_MCP_PAT;
@@ -1681,12 +1693,13 @@ _write_claude_settings_env() {
 #   was treated as a directory name). This pass captures the actual
 #   bootstrap-shell PATH and serializes it.
 _write_claude_settings_paths() {
+  [ "${VADE_COO_MODE:-0}" = "1" ] || return 0
   local cloud_state_dir="$1" bindir="$2"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json paths merge"
     return 0
   fi
-  local settings_dir="${HOME}/.claude"
+  local settings_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
   [ -f "$settings_file" ] || echo '{}' > "$settings_file"
@@ -1750,12 +1763,13 @@ _write_claude_settings_paths() {
 # value would replace the well-formed PATH bootstrap captured at install
 # time. Idempotent. vade-runtime#171.
 _write_claude_settings_state_dir() {
+  [ "${VADE_COO_MODE:-0}" = "1" ] || return 0
   local cloud_state_dir="$1"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json state-dir merge"
     return 0
   fi
-  local settings_dir="${HOME}/.claude"
+  local settings_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
   [ -f "$settings_file" ] || echo '{}' > "$settings_file"
@@ -1786,12 +1800,13 @@ _write_claude_settings_state_dir() {
 # inherit a thin PATH that would clobber the well-formed install-time
 # PATH if rewritten). Idempotent. vade-runtime#228.
 _write_claude_settings_runtime_dir() {
+  [ "${VADE_COO_MODE:-0}" = "1" ] || return 0
   local runtime_dir="$1"
   if ! check_cmd node; then
     log "Warning: node missing; skipping ~/.claude/settings.json runtime-dir merge"
     return 0
   fi
-  local settings_dir="${HOME}/.claude"
+  local settings_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
   [ -f "$settings_file" ] || echo '{}' > "$settings_file"
