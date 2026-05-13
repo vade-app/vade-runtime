@@ -272,7 +272,15 @@
       "Bash(flyctl secrets *)",
       "mcp__claude_ai_Mem0__get_memories",
       "mcp__claude_ai_Mem0__search_memories",
-      "Bash(cp /home/user/vade-runtime/.claude/settings.json /home/user/.claude/settings.json && diff /home/user/.claude/settings.json /home/user/vade-runtime/.claude/settings.json && echo \"sync OK\")"
+      "Bash(cp /home/user/vade-runtime/.claude/settings.json /home/user/.claude/settings.json && diff /home/user/.claude/settings.json /home/user/vade-runtime/.claude/settings.json && echo \"sync OK\")",
+      "Bash(cp /home/user/.vade-cloud-state/integrity-check.json coo/audits/2026-05-13_boot-skip-failure/integrity-check-post-recovery.json)",
+      "Bash(cp /root/.claude/projects/-home-user/82dad922-11c6-4f61-bba3-5a0739850555.jsonl coo/audits/2026-05-13_boot-skip-failure/transcript-82dad922.jsonl)",
+      "Bash(cp /root/.claude/projects/-home-user/82dad922-11c6-4f61-bba3-5a0739850555/subagents/agent-a6f5a7cab3f893be4.jsonl coo/audits/2026-05-13_boot-skip-failure/subagent-a6f5a7cab3f893be4.jsonl)",
+      "Bash(cp /root/.claude/projects/-home-user/82dad922-11c6-4f61-bba3-5a0739850555/subagents/agent-a7b86188bb0d1228a.jsonl coo/audits/2026-05-13_boot-skip-failure/subagent-a7b86188bb0d1228a-fabricator.jsonl)",
+      "Bash(cp /root/.claude/projects/-home-user/9acae97b-891f-4b4c-835c-f89051b9789f.jsonl coo/audits/2026-05-13_boot-skip-failure/transcript-9acae97b.jsonl)",
+      "Bash(cp /root/.vade/coo-bootstrap.log coo/audits/2026-05-13_boot-skip-failure/coo-bootstrap.log)",
+      "Bash(mkdir -p coo/audits/2026-05-13_boot-skip-failure)",
+      "Bash(xargs -I{} cp {} coo/audits/2026-05-13_boot-skip-failure/)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
