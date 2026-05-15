@@ -63,6 +63,14 @@ printf '{"ok":false,"phase":"init","detail":"harness did not complete"}\n' > "$O
 
 # ── 1. Stage repo + mocks into a host scratch dir we'll bind-mount ──
 SCRATCH="$(mktemp -d /tmp/layer2-scratch.XXXXXX)"
+# mktemp -d creates the dir as mode 0700, owned by the host (GitHub
+# Actions runner) UID. The Dockerfile drops to USER node (uid 1000),
+# which can't traverse a 0700 host dir even via bind mount — `bash
+# /workspace/layer2-entrypoint.sh` then fails with "Permission denied"
+# (exit 126). 0755 lets the container's non-root user read the staged
+# entrypoint + repo while the host's tmpdir-removal trap still works
+# (the host owner retains write).
+chmod 0755 "$SCRATCH"
 trap 'rm -rf "$SCRATCH" 2>/dev/null || true' EXIT
 
 log "Scratch dir: $SCRATCH"
@@ -412,7 +420,11 @@ log "Wrote summary: $OUT_SUMMARY"
 log "Wrote result:  $OUT_RESULT"
 
 # ── 6. Exit code reflects ok ────────────────────────────────────────
-OK="$(node -e '
+# Env-prefixed like the parse + render blocks above. Without the
+# prefix, node -e sees process.env.OUT_RESULT as undefined and
+# readFileSync throws ERR_INVALID_ARG_TYPE (caught the regression
+# on the workflow's own introduction PR — vrt#272 first run).
+OK="$(OUT_RESULT="$OUT_RESULT" node -e '
   const fs = require("fs");
   const r = JSON.parse(fs.readFileSync(process.env.OUT_RESULT, "utf8"));
   process.stdout.write(r.ok ? "1" : "0");
