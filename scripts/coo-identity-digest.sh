@@ -46,6 +46,103 @@ if [ ! -d "$VADE_CLOUD_STATE_DIR" ] && [ -d "$HOME/.vade/local-state" ]; then
   VADE_CLOUD_STATE_DIR="$HOME/.vade/local-state"
 fi
 SETUP_RECEIPT="${VADE_CLOUD_STATE_DIR}/setup-receipt.json"
+INTEGRITY_CHECK="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
+SKIP_SENTINEL="${HOME}/.vade/.coo-bootstrap-skip-reason"
+
+# ── INTEGRITY-CHECK BANNER (TOP OF DIGEST) ───────────────────────────
+#
+# Phase A of vade-coo-memory#762: the integrity-check posture and any
+# loud-skip sentinel from coo-bootstrap surface BEFORE any identity
+# content. The 2026-05-13 boot-skip incident showed that integrity-check
+# at the BOTTOM of the digest (and at step 14 of CLAUDE.md reading
+# order) is a post-hoc verifier — the failing session never reached it.
+# Hoisting both to the top of the first screen makes degradation
+# unmissable; combined with CLAUDE.md step 1 reading the JSON file,
+# the agent's first action on a degraded boot is surface-to-BDFL.
+#
+# Run integrity-check FIRST so the file we read below reflects this
+# session. Original position (after Mem0 banner) eliminated to avoid
+# duplication.
+bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
+
+_integrity_ok="unknown"
+_integrity_passed="?"
+_integrity_total="?"
+_integrity_degraded=""
+if [ -f "$INTEGRITY_CHECK" ] && check_cmd node; then
+  _integrity_summary="$(node -e '
+    try {
+      const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const s = r.summary || {};
+      const ok = s.ok === true ? "true" : (s.ok === false ? "false" : "unknown");
+      const passed = s.passed ?? "?";
+      const total = s.total ?? "?";
+      const degraded = (Array.isArray(s.degraded) ? s.degraded : []).join(",");
+      console.log(ok + "|" + passed + "|" + total + "|" + degraded);
+    } catch { console.log("unknown|?|?|"); }
+  ' "$INTEGRITY_CHECK" 2>/dev/null || echo "unknown|?|?|")"
+  IFS='|' read -r _integrity_ok _integrity_passed _integrity_total _integrity_degraded <<<"$_integrity_summary"
+fi
+
+if [ "$_integrity_ok" = "false" ] || [ -f "$SKIP_SENTINEL" ]; then
+  # DEGRADED BOOT — print loudly at the very top. The 4-line recovery
+  # sequence below is the proven fix from the 2026-05-13 audit
+  # (vade-coo-memory/coo/audits/2026-05-13_boot-skip-failure/recovery-transcript.txt).
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "⚠️  BOOT DEGRADED — DO NOT START SUBSTANTIVE WORK"
+  echo "═══════════════════════════════════════════════════════════════"
+  if [ -f "$SKIP_SENTINEL" ]; then
+    _skip_reason="$(sed -n '1p' "$SKIP_SENTINEL" 2>/dev/null || true)"
+    _skip_hint="$(sed -n '2p' "$SKIP_SENTINEL" 2>/dev/null || true)"
+    echo "  Skip reason:  $_skip_reason"
+    echo "  Recovery:     $_skip_hint"
+    echo ""
+  fi
+  if [ "$_integrity_ok" = "false" ]; then
+    echo "  integrity-check: summary.ok=false  ($_integrity_passed/$_integrity_total)"
+    if [ -n "$_integrity_degraded" ]; then
+      echo "  degraded:        $_integrity_degraded"
+    fi
+    echo ""
+    # Inline failing-invariant details.
+    if check_cmd node && [ -f "$INTEGRITY_CHECK" ]; then
+      node -e '
+        try {
+          const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+          const degraded = Array.isArray(r.summary && r.summary.degraded) ? r.summary.degraded : [];
+          if (degraded.length > 0) {
+            console.log("  Failing invariants:");
+            for (const id of degraded) {
+              const grp = id[0];
+              const entry = (r.groups || {})[grp] && (r.groups || {})[grp][id];
+              const detail = (entry && entry.detail) || "(no detail)";
+              console.log("    " + id + ": " + detail);
+            }
+            console.log("");
+          }
+        } catch (_) {}
+      ' "$INTEGRITY_CHECK" 2>/dev/null || true
+    fi
+  fi
+  echo "  Proven recovery (from 2026-05-13 audit recovery-transcript.txt):"
+  echo "    1) git config --file \$HOME/.gitconfig --remove-section user  # clear non-COO gitconfig"
+  echo "    2) VADE_COO_MODE=1 bash /home/user/vade-runtime/scripts/coo-bootstrap.sh"
+  echo "    3) set -a; source \$HOME/.vade/coo-env; set +a"
+  echo "    4) bash /home/user/vade-runtime/scripts/integrity-check.sh"
+  echo ""
+  echo "  CLAUDE.md step 1 (conditional gate): surface to BDFL, do no other work."
+  echo "═══════════════════════════════════════════════════════════════"
+  echo ""
+elif [ "$_integrity_ok" = "true" ]; then
+  # OK boot — one-line green banner. Detailed integrity table follows
+  # later in the digest (the original "Integrity check" block was
+  # eliminated by this hoist; keep a terse top-line so green sessions
+  # still see the result at first screen).
+  echo "───────────────────────────────────────────────────────────────"
+  echo "Boot integrity: summary.ok=true  ($_integrity_passed/$_integrity_total)  — full report: $INTEGRITY_CHECK"
+  echo "───────────────────────────────────────────────────────────────"
+  echo ""
+fi
 
 if [ ! -f "$CLAUDE_MD" ]; then
   echo "[vade-setup] coo-identity-digest: $CLAUDE_MD not found; skipping."
@@ -389,11 +486,13 @@ echo "                            Sole GitHub write path. github-coo MCP retired
 echo "                            Epic #112 Stream 1; harness github MCP writes deny-listed."
 echo "───────────────────────────────────────────────────────────────"
 
-# Run the integrity check now, before reading results for display.
-# Placed here (not in session-start-sync.sh) so it fires after the
-# platform's git-proxy repo-sync has settled; running it earlier
-# produced boot-time false alarms on F2/F3/F4 (vade-runtime#XXX).
-bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
+# Note: integrity-check.sh runs at the TOP of the digest now (see
+# the INTEGRITY-CHECK BANNER block above), so the integrity-check.json
+# file is already current by the time this section reads it. Original
+# placement here (after Mem0 banner) was removed by Phase A of
+# vade-coo-memory#762; the integrity-check fires after session-start-sync
+# anyway because this whole script runs after session-start-sync in the
+# SessionStart hook chain.
 
 # Mem0 read/write surface — same banner pattern as "GitHub write surface"
 # above. Per vade-runtime#109, the hosted Mem0 MCP at mcp.mem0.ai hits
@@ -403,7 +502,6 @@ bash "$SCRIPT_DIR/integrity-check.sh" 2>/dev/null || true
 # loud ⚠ when degraded — so the agent sees Mem0 posture at turn zero
 # rather than only when integrity-check enumerates degraded invariants.
 # E5 in integrity-check.json is the canonical pass/fail signal.
-INTEGRITY_CHECK="${VADE_CLOUD_STATE_DIR}/integrity-check.json"
 
 echo ""
 echo "───────────────────────────────────────────────────────────────"
@@ -464,60 +562,10 @@ case "$e5_status" in
 esac
 echo "───────────────────────────────────────────────────────────────"
 
-# Integrity check summary — the authoritative "did this session's boot
-# pipeline land correctly" verdict. Written to
-# $VADE_CLOUD_STATE_DIR/integrity-check.json by the call above. The file
-# itself is already read-on-demand by CLAUDE.md §14; this block echoes
-# the summary inline so routine-triggered sessions (non-startup matcher)
-# and automation instances see the posture without having to cat the
-# file themselves. Quorum-automation context: without this, routine
-# instances operated with less situational awareness than interactive
-# COO sessions (observed during quorum #3, PR #90).
-echo ""
-echo "───────────────────────────────────────────────────────────────"
-echo "Integrity check"
-echo "───────────────────────────────────────────────────────────────"
-if [ -f "$INTEGRITY_CHECK" ] && check_cmd node; then
-  node -e '
-    const fs = require("fs");
-    try {
-      const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      const s = r.summary || {};
-      const ok = s.ok === true;
-      const passed = s.passed ?? "?";
-      const total = s.total ?? "?";
-      const degraded = Array.isArray(s.degraded) ? s.degraded : [];
-      console.log("  summary.ok:      " + (ok ? "true" : "false"));
-      console.log("  passed:          " + passed + "/" + total);
-      if (degraded.length > 0) {
-        console.log("  degraded:        " + degraded.join(", "));
-        console.log("");
-        console.log("  Failing invariants — see groups.<A-E>.<id>.detail in the file:");
-        for (const id of degraded) {
-          const grp = id[0];
-          const entry = (r.groups || {})[grp]?.[id];
-          const detail = entry?.detail || "(no detail)";
-          console.log("    " + id + ": " + detail);
-        }
-      }
-      if (!ok) {
-        console.log("");
-        console.log("  If any invariant is a known false-negative (e.g. B3/D3 per");
-        console.log("  MEMO 2026-04-23-03), cite the memo before acting. Otherwise");
-        console.log("  investigate before touching attributable surfaces.");
-      }
-      console.log("  File:            " + process.argv[1]);
-    } catch (e) {
-      console.log("  (unreadable: " + e.message + ")");
-    }
-  ' "$INTEGRITY_CHECK" 2>/dev/null || cat "$INTEGRITY_CHECK"
-elif [ -f "$INTEGRITY_CHECK" ]; then
-  echo "  node not available; raw file at $INTEGRITY_CHECK"
-else
-  echo "  (no integrity check at $INTEGRITY_CHECK)"
-  echo "  session-start-sync.sh did not run or did not write the receipt."
-fi
-echo "───────────────────────────────────────────────────────────────"
+# Note: detailed integrity-check summary was hoisted to the TOP of the
+# digest in Phase A of vade-coo-memory#762. See the INTEGRITY-CHECK
+# BANNER block near the top of this script. Original block deleted here
+# to avoid duplication.
 
 # Cloud build-time receipt — what did cloud-setup.sh actually do at
 # snapshot build? Present = build ran; missing = build skipped or the
