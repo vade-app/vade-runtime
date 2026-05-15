@@ -29,6 +29,65 @@ bootstrap_log_record() {
   fi
 }
 
+# Cloud-context fingerprint. True when this host is (a) the Anthropic
+# cloud snapshot — fingerprinted by /home/user/.vade-cloud-state existing
+# as a directory — or (b) a fresh Anthropic snapshot where the gitconfig
+# baseline carries user.email=noreply@anthropic.com. Used by
+# _write_skip_reason to decide whether a silent coo-bootstrap skip
+# should leave a loud surface (cloud: yes; Mac: no — Mac silent-skips
+# are intentional, e.g. bare `claude` from any cwd outside a COO context).
+#
+# Detection deliberately does NOT use OP_SERVICE_ACCOUNT_TOKEN: that env
+# var is itself one of the silent-skip gates (line 84 in coo-bootstrap.sh).
+# Any cloud failure mode where env didn't propagate (the 2026-05-13
+# regression class) would have OP_SERVICE_ACCOUNT_TOKEN unset and would
+# read as Mac under a token-based check, silently skip without a
+# sentinel, and reproduce the same opaque failure. Filesystem and
+# gitconfig fingerprints are reliable across that class.
+_is_cloud_context() {
+  [ -d /home/user/.vade-cloud-state ] && return 0
+  local gc="${VADE_COO_GITCONFIG:-${HOME}/.gitconfig}"
+  if [ -f "$gc" ]; then
+    local em
+    em="$(git config --file "$gc" --get user.email 2>/dev/null || true)"
+    [ "$em" = "noreply@anthropic.com" ] && return 0
+  fi
+  return 1
+}
+
+# Loud-skip surfacing. When coo-bootstrap takes a silent-skip path in a
+# cloud context, write a sentinel file the identity-digest hook reads
+# to surface the skip reason + recovery hint at the TOP of the digest
+# banner. Closes the surface gap that allowed the 2026-05-13 boot-skip
+# incident to run for ~30 min as generic Claude Code before BDFL caught
+# it. On non-cloud contexts (Mac, local devcontainer outside COO mode)
+# the sentinel is not written — silent skips remain silent because the
+# skip is the correct behavior outside an explicit COO session.
+#
+# Sentinel format: two-line text, "reason" then "hint". The digest hook
+# reads via head/sed; keep both lines short and shell-safe.
+#
+# Idempotent: callers overwrite on every skip pass so the file always
+# reflects the most recent skip. The digest hook clears it when
+# bootstrap eventually completes ok (see coo-identity-digest.sh banner).
+VADE_COO_SKIP_SENTINEL="${HOME}/.vade/.coo-bootstrap-skip-reason"
+_write_skip_reason() {
+  local reason="$1" hint="$2"
+  _is_cloud_context || return 0
+  mkdir -p "$(dirname "$VADE_COO_SKIP_SENTINEL")" 2>/dev/null || return 0
+  {
+    printf '%s\n' "$reason"
+    printf '%s\n' "$hint"
+  } > "$VADE_COO_SKIP_SENTINEL" 2>/dev/null || return 0
+}
+
+# Clear the loud-skip sentinel. Called on a successful bootstrap so a
+# subsequent digest banner doesn't show stale skip reasons after the
+# operator (or VADE_FORCE_COO_BOOTSTRAP=1 re-run) recovers the session.
+_clear_skip_reason() {
+  rm -f "$VADE_COO_SKIP_SENTINEL" 2>/dev/null || true
+}
+
 # Durable cloud-state directory. Lives under /home/user/ so it survives
 # the snapshot-build → session-resume transition; ~/.vade/ is under
 # /root/ in the cloud image and gets fresh on every session boot, which
