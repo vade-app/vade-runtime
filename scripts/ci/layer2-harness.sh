@@ -185,9 +185,12 @@ if [ "$DRIVER_RC" -ne 0 ]; then
               /home/user/.claude/settings.json \
               /root/.claude/settings.json; do
     if [ -f "$cand" ]; then
-      log "  settings.json at $cand — env keys:"
-      jq -r '.env // {} | keys[]' "$cand" 2>/dev/null \
-        | sed 's/^/    /' || log "    (jq parse failed)"
+      log "  settings.json at $cand (size=$(wc -c <"$cand")B):"
+      log "    first 400 chars:"
+      head -c 400 "$cand" | sed 's/^/      /'
+      log "    env keys via jq:"
+      jq -r '.env // {} | keys[] // empty' "$cand" 2>&1 \
+        | head -20 | sed 's/^/      /' || true
     fi
   done
 fi
