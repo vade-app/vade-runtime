@@ -178,6 +178,18 @@ log "Layer-1 driver exit: $DRIVER_RC"
 if [ "$DRIVER_RC" -ne 0 ]; then
   log "Layer-1 driver log tail:"
   tail -40 /tmp/layer1-driver.log | sed 's/^/[layer1] /'
+  log "Diagnostic dump on driver failure:"
+  log "  TEST_HOME = ${VADE_CI_TEST_HOME:-/tmp/vade-ci-home} (default)"
+  log "  HOME (current shell) = $HOME"
+  for cand in /tmp/vade-ci-home/.claude/settings.json \
+              /home/user/.claude/settings.json \
+              /root/.claude/settings.json; do
+    if [ -f "$cand" ]; then
+      log "  settings.json at $cand — env keys:"
+      jq -r '.env // {} | keys[]' "$cand" 2>/dev/null \
+        | sed 's/^/    /' || log "    (jq parse failed)"
+    fi
+  done
 fi
 # Capture build.log + integrity-check.json for the host-side artifact
 # upload. Layer-1 writes them under $VADE_CI_WORKSPACE_ROOT/.vade-cloud-state.
