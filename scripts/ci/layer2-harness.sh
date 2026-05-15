@@ -146,31 +146,30 @@ set -uo pipefail
 
 log() { printf '[layer2-entry] %s\n' "$*"; }
 
-# Mirror run-bootstrap-regression.sh's expectations on workspace
-# layout but keep /home/user as-is (the real cloud path). The image
-# ships with /home/node as the runtime user's home; for the harness
-# we want /home/user so production paths resolve identically.
-mkdir -p /home/user
-# /workspace is the bind-mount target (mounted by docker run -v).
-# Copy into /home/user so paths match production.
-log "Staging repos from /workspace into /home/user"
-cp -a /workspace/vade-runtime /home/user/vade-runtime
-cp -a /workspace/vade-coo-memory /home/user/vade-coo-memory
-cp -a /workspace/vade-core /home/user/vade-core
-
-# Run the Layer-1 driver to set up cloud-state, mocks, and bootstrap.
-# Same script, different invocation site. We don't want a separate
-# fork of the mock surface — when run-bootstrap-regression.sh evolves,
-# Layer-2 inherits the fix free.
+# Run Layer-1 directly against the bind-mounted source. Layer-1 already
+# stages SOURCE_DIR → $VADE_CI_WORKSPACE_ROOT/vade-runtime and stubs
+# vade-coo-memory + vade-core itself (it's designed to be the
+# single staging entrypoint). The harness pre-copying into /home/user
+# and then pointing Layer-1 at /home/user/vade-runtime triggers
+# Layer-1's self-clobber guard (SOURCE_DIR == RUNTIME_DST → exit 2),
+# caught on vrt#272 third run. /workspace is the bind-mount target
+# (mounted by docker run -v from the host $SCRATCH).
 export VADE_CI_WORKSPACE_ROOT=/home/user
 export VADE_CI_TEST_HOME=/home/user
 log "Running Layer-1 bootstrap driver inside container"
 set +e
-bash /home/user/vade-runtime/scripts/ci/run-bootstrap-regression.sh \
-  /home/user/vade-runtime > /tmp/layer1-driver.log 2>&1
+bash /workspace/vade-runtime/scripts/ci/run-bootstrap-regression.sh \
+  /workspace/vade-runtime > /tmp/layer1-driver.log 2>&1
 DRIVER_RC=$?
 set -e
 log "Layer-1 driver exit: $DRIVER_RC"
+# Tail the driver log on failure so the surface isn't dependent on
+# artifact upload (caught on vrt#272 third run, where the only
+# visible error was "Layer-1 driver exit: 2" with no diagnostic).
+if [ "$DRIVER_RC" -ne 0 ]; then
+  log "Layer-1 driver log tail:"
+  tail -40 /tmp/layer1-driver.log | sed 's/^/[layer1] /'
+fi
 # Capture build.log + integrity-check.json for the host-side artifact
 # upload. Layer-1 writes them under $VADE_CI_WORKSPACE_ROOT/.vade-cloud-state.
 if [ -f /home/user/.vade-cloud-state/integrity-check.json ]; then
