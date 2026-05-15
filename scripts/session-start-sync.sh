@@ -85,6 +85,12 @@ merge_coo_settings_state_dir
 # the call above (no PATH rewrite). vade-runtime#228 carries the
 # specific evidence (the Night's Watch standing-order call form).
 merge_coo_settings_runtime_dir
+# Persist VADE_COO_MEMORY_DIR into ~/.claude/settings.json env. Sibling
+# parity with VADE_RUNTIME_DIR — gh-coo-wrap.sh and various skills/hooks
+# resolve the memory-repo path via $VADE_COO_MEMORY_DIR, and without
+# this merge it doesn't survive into subprocess env across resume.
+# vade-runtime#265.
+merge_coo_settings_memory_dir
 # Refresh the external-touch (F6) cache when it's older than 24h.
 # Build-time prewarm in cloud-setup.sh handles the fresh-snapshot case;
 # this catches snapshots resumed after the cache has gone stale and
