@@ -154,8 +154,17 @@ log() { printf '[layer2-entry] %s\n' "$*"; }
 # Layer-1's self-clobber guard (SOURCE_DIR == RUNTIME_DST → exit 2),
 # caught on vrt#272 third run. /workspace is the bind-mount target
 # (mounted by docker run -v from the host $SCRATCH).
+# VADE_CI_WORKSPACE_ROOT=/home/user matches the production cloud
+# path the audit cares about (vade-runtime / vade-coo-memory / vade-core
+# live there). Let VADE_CI_TEST_HOME default to /tmp/vade-ci-home —
+# Layer-1 rm -rf's TEST_HOME at line 145 to provision an isolated
+# HOME; if TEST_HOME == WORKSPACE_ROOT, that wipe destroys the staged
+# repos right after they were staged (caught on vrt#272 fourth run:
+# "bash: /home/user/vade-runtime/scripts/cloud-setup.sh: No such file
+# or directory"). The integrity-check.json still lands at
+# $WORKSPACE_ROOT/.vade-cloud-state/ — that's pinned to WORKSPACE_ROOT,
+# not TEST_HOME, so the Layer-2 SDK probe's prompt path stays valid.
 export VADE_CI_WORKSPACE_ROOT=/home/user
-export VADE_CI_TEST_HOME=/home/user
 log "Running Layer-1 bootstrap driver inside container"
 set +e
 bash /workspace/vade-runtime/scripts/ci/run-bootstrap-regression.sh \
