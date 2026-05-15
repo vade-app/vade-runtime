@@ -47,6 +47,15 @@ if [ "${VADE_COO_MODE:-0}" != "1" ]; then
   log "coo-bootstrap: VADE_COO_MODE!=1; skipping COO bootstrap entirely."
   COO_BOOTSTRAP_STEP="skip-no-coo-mode"
   bootstrap_log_record SKIP "VADE_COO_MODE!=1"
+  # Cloud-aware loud-skip: write a sentinel the identity-digest hook
+  # surfaces at the TOP of its banner. Mac silent-skips remain silent
+  # (helper no-ops outside cloud context). 2026-05-13 root cause:
+  # this exact gate fired silently when the gitconfig-overwrite guard
+  # blocked the persistence write, leaving every subsequent boot to
+  # hit this skip with no surface. Phase A of vade-coo-memory#762.
+  _write_skip_reason \
+    "VADE_COO_MODE!=1 — coo-bootstrap exited before identity load" \
+    "Fix: VADE_FORCE_COO_BOOTSTRAP=1 VADE_COO_MODE=1 bash /home/user/vade-runtime/scripts/coo-bootstrap.sh; set -a; source ~/.vade/coo-env; set +a; bash /home/user/vade-runtime/scripts/integrity-check.sh"
   trap - EXIT
   exit 0
 fi
@@ -75,6 +84,12 @@ if [ -n "$existing_email" ] \
    && [ "$existing_email" != "noreply@anthropic.com" ]; then
   log "coo-bootstrap: refusing to overwrite $GC (existing user.email=$existing_email is not COO)"
   bootstrap_log_record SKIP "refused to overwrite non-COO gitconfig $GC"
+  # Cloud-aware loud-skip sentinel. This branch fires when an
+  # unexpected user.email squats in $GC — the 2026-05-13 class but
+  # for a non-Anthropic baseline. Mac silent-skips remain silent.
+  _write_skip_reason \
+    "coo-bootstrap refused to overwrite $GC (existing user.email=$existing_email)" \
+    "Fix: inspect $GC, remove the non-COO user section (git config --file $GC --remove-section user), then VADE_FORCE_COO_BOOTSTRAP=1 bash /home/user/vade-runtime/scripts/coo-bootstrap.sh"
   trap - EXIT
   exit 0
 fi
@@ -85,6 +100,13 @@ if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
   log "coo-bootstrap: OP_SERVICE_ACCOUNT_TOKEN unset; skipping COO identity setup."
   COO_BOOTSTRAP_STEP="skip-no-op-token"
   bootstrap_log_record SKIP "OP_SERVICE_ACCOUNT_TOKEN unset"
+  # Cloud-aware loud-skip sentinel. Without OP_SERVICE_ACCOUNT_TOKEN
+  # there's no 1Password access and the secret-fetch chain cannot
+  # complete. Surface this loudly on cloud so the operator knows to
+  # provision the env (Anthropic cloud "Setup script" env var).
+  _write_skip_reason \
+    "OP_SERVICE_ACCOUNT_TOKEN unset — coo-bootstrap cannot fetch secrets" \
+    "Fix: provision OP_SERVICE_ACCOUNT_TOKEN in the Anthropic cloud 'Setup script' env, then resume the container. For ad-hoc recovery, export the token then VADE_FORCE_COO_BOOTSTRAP=1 bash /home/user/vade-runtime/scripts/coo-bootstrap.sh"
   trap - EXIT
   exit 0
 fi
@@ -147,6 +169,10 @@ if [ "${VADE_FORCE_COO_BOOTSTRAP:-0}" != "1" ] \
   log "coo-bootstrap: already complete this container; skipping."
   COO_BOOTSTRAP_STEP="skip-marker-present"
   bootstrap_log_record SKIP "marker present at $COO_BOOT_MARKER (cached PAT validated)"
+  # Benign skip: identity is already loaded. Clear any stale skip
+  # sentinel from a prior failing boot so the digest banner reflects
+  # current state.
+  _clear_skip_reason
   trap - EXIT
   exit 0
 fi
@@ -226,6 +252,11 @@ summarize_coo_identity
 
 mkdir -p "$(dirname "$COO_BOOT_MARKER")"
 touch "$COO_BOOT_MARKER"
+
+# Clear any stale loud-skip sentinel from a prior failing boot now that
+# the full bootstrap has completed successfully. Digest banner picks up
+# the absence on the next session-start.
+_clear_skip_reason
 
 COO_BOOTSTRAP_STEP="complete"
 log "coo-bootstrap: complete"

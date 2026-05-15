@@ -29,6 +29,65 @@ bootstrap_log_record() {
   fi
 }
 
+# Cloud-context fingerprint. True when this host is (a) the Anthropic
+# cloud snapshot — fingerprinted by /home/user/.vade-cloud-state existing
+# as a directory — or (b) a fresh Anthropic snapshot where the gitconfig
+# baseline carries user.email=noreply@anthropic.com. Used by
+# _write_skip_reason to decide whether a silent coo-bootstrap skip
+# should leave a loud surface (cloud: yes; Mac: no — Mac silent-skips
+# are intentional, e.g. bare `claude` from any cwd outside a COO context).
+#
+# Detection deliberately does NOT use OP_SERVICE_ACCOUNT_TOKEN: that env
+# var is itself one of the silent-skip gates (line 84 in coo-bootstrap.sh).
+# Any cloud failure mode where env didn't propagate (the 2026-05-13
+# regression class) would have OP_SERVICE_ACCOUNT_TOKEN unset and would
+# read as Mac under a token-based check, silently skip without a
+# sentinel, and reproduce the same opaque failure. Filesystem and
+# gitconfig fingerprints are reliable across that class.
+_is_cloud_context() {
+  [ -d /home/user/.vade-cloud-state ] && return 0
+  local gc="${VADE_COO_GITCONFIG:-${HOME}/.gitconfig}"
+  if [ -f "$gc" ]; then
+    local em
+    em="$(git config --file "$gc" --get user.email 2>/dev/null || true)"
+    [ "$em" = "noreply@anthropic.com" ] && return 0
+  fi
+  return 1
+}
+
+# Loud-skip surfacing. When coo-bootstrap takes a silent-skip path in a
+# cloud context, write a sentinel file the identity-digest hook reads
+# to surface the skip reason + recovery hint at the TOP of the digest
+# banner. Closes the surface gap that allowed the 2026-05-13 boot-skip
+# incident to run for ~30 min as generic Claude Code before BDFL caught
+# it. On non-cloud contexts (Mac, local devcontainer outside COO mode)
+# the sentinel is not written — silent skips remain silent because the
+# skip is the correct behavior outside an explicit COO session.
+#
+# Sentinel format: two-line text, "reason" then "hint". The digest hook
+# reads via head/sed; keep both lines short and shell-safe.
+#
+# Idempotent: callers overwrite on every skip pass so the file always
+# reflects the most recent skip. The digest hook clears it when
+# bootstrap eventually completes ok (see coo-identity-digest.sh banner).
+VADE_COO_SKIP_SENTINEL="${HOME}/.vade/.coo-bootstrap-skip-reason"
+_write_skip_reason() {
+  local reason="$1" hint="$2"
+  _is_cloud_context || return 0
+  mkdir -p "$(dirname "$VADE_COO_SKIP_SENTINEL")" 2>/dev/null || return 0
+  {
+    printf '%s\n' "$reason"
+    printf '%s\n' "$hint"
+  } > "$VADE_COO_SKIP_SENTINEL" 2>/dev/null || return 0
+}
+
+# Clear the loud-skip sentinel. Called on a successful bootstrap so a
+# subsequent digest banner doesn't show stale skip reasons after the
+# operator (or VADE_FORCE_COO_BOOTSTRAP=1 re-run) recovers the session.
+_clear_skip_reason() {
+  rm -f "$VADE_COO_SKIP_SENTINEL" 2>/dev/null || true
+}
+
 # Durable cloud-state directory. Lives under /home/user/ so it survives
 # the snapshot-build → session-resume transition; ~/.vade/ is under
 # /root/ in the cloud image and gets fresh on every session boot, which
@@ -48,6 +107,13 @@ VADE_SETUP_RECEIPT="${VADE_CLOUD_STATE_DIR}/setup-receipt.json"
 # so hook subprocesses (and Night's Watch invocations) inherit it.
 # vade-runtime#228.
 VADE_RUNTIME_DIR="${VADE_RUNTIME_DIR:-/home/user/vade-runtime}"
+
+# vade-coo-memory working tree path. Sibling parity with VADE_RUNTIME_DIR;
+# gh-coo-wrap.sh and various skills/hooks resolve memory-repo paths via
+# $VADE_COO_MEMORY_DIR. Persisted into ~/.claude/settings.json env via
+# merge_coo_settings_memory_dir so hook subprocesses inherit it on resume.
+# vade-runtime#265.
+VADE_COO_MEMORY_DIR="${VADE_COO_MEMORY_DIR:-/home/user/vade-coo-memory}"
 
 # Same shape as bootstrap_log_record but writes to the durable build log.
 # Use from cloud-setup.sh and anything else running at snapshot-build
@@ -1555,6 +1621,16 @@ merge_coo_settings_runtime_dir() {
   _write_claude_settings_runtime_dir "$VADE_RUNTIME_DIR"
 }
 
+# Persist VADE_COO_MEMORY_DIR into ~/.claude/settings.json env. Same shape and
+# rationale as merge_coo_settings_runtime_dir / merge_coo_settings_state_dir:
+# host-stable path, no PATH rewrite, safe to re-write on every session start.
+# Hook subprocesses, skills, and the gh-coo-wrap shim resolve memory-repo
+# paths via $VADE_COO_MEMORY_DIR (see gh-coo-wrap.sh:257); persist it so
+# they inherit the value on resume. vade-runtime#265.
+merge_coo_settings_memory_dir() {
+  _write_claude_settings_memory_dir "$VADE_COO_MEMORY_DIR"
+}
+
 # Merge COO env vars into ~/.claude/settings.json "env" object. Claude
 # Code reads this at process startup, so ${GITHUB_MCP_PAT} etc. in
 # .mcp.json substitute correctly. Idempotent.
@@ -1829,6 +1905,42 @@ _write_claude_settings_runtime_dir() {
   ' "$settings_file"
   chmod 600 "$settings_file"
   log "  merged VADE_RUNTIME_DIR into $settings_file"
+}
+
+# Write VADE_COO_MEMORY_DIR into ~/.claude/settings.json env without touching
+# the PATH key. Same shape and rationale as _write_claude_settings_runtime_dir.
+# vade-runtime#265.
+_write_claude_settings_memory_dir() {
+  [ "${VADE_COO_MODE:-0}" = "1" ] || return 0
+  local memory_dir="$1"
+  [ -n "$memory_dir" ] || return 0
+  if ! check_cmd node; then
+    log "Warning: node missing; skipping ~/.claude/settings.json memory-dir merge"
+    return 0
+  fi
+  local settings_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+  local settings_file="$settings_dir/settings.json"
+  mkdir -p "$settings_dir"
+  [ -f "$settings_file" ] || echo '{}' > "$settings_file"
+
+  VADE_COO_MEMORY_DIR="$memory_dir" node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(path, "utf8")) || {}; }
+    catch (e) {
+      console.error("[vade-setup] " + path + " unparseable; aborting memory-dir merge.");
+      process.exit(1);
+    }
+    const merged = Object.assign({}, cfg.env || {});
+    if (process.env.VADE_COO_MEMORY_DIR) {
+      merged.VADE_COO_MEMORY_DIR = process.env.VADE_COO_MEMORY_DIR;
+    }
+    cfg.env = merged;
+    fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+  ' "$settings_file"
+  chmod 600 "$settings_file"
+  log "  merged VADE_COO_MEMORY_DIR into $settings_file"
 }
 
 # Ensure openssh-client is present (provides ssh-keygen + ssh-keyscan).
