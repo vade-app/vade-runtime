@@ -235,7 +235,16 @@ log "docker run …"
 # --rm keeps the host clean; --network bridge is the default and is
 # fine for the fake-env mocks (no external traffic except SDK API).
 set +e
+# Run as root inside the container. The image's Dockerfile drops to
+# USER node (uid 1000) — fine for devcontainer use, but the entrypoint
+# needs to `mkdir /home/user` (requires write on /) and write under
+# /workspace (bind-mount owned by the host runner's UID; node can't
+# write there). Production cloud runs Claude Code as root — caught the
+# regression on vrt#272's second run (mkdir/cp failures, then /workspace
+# Permission denied on the fail-marker write). Running as root mirrors
+# the production environment we're testing.
 docker run --rm \
+  --user 0:0 \
   -e ANTHROPIC_API_KEY \
   -e LAYER2_AGENT_MODEL="$MODEL" \
   -v "$SCRATCH:/workspace" \
