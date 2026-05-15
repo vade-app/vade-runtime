@@ -10,12 +10,23 @@
 #   3. Install PATH-shadowed mocks for `op` and `curl` (latter only
 #      intercepts api.github.com/user, forwards everything else).
 #   4. Provision an isolated $HOME so the runner's gitconfig / ~/.claude
-#      stay untouched.
+#      stay untouched, then plant the Anthropic-baseline gitconfig
+#      fixture (user.email=noreply@anthropic.com) the cloud snapshot
+#      ships by default. Mirrors the cloud baseline state coo-bootstrap
+#      must overwrite-safely accept (vrt#266 allowlist; vrt#267 / Phase
+#      B of vcm#762 — the persistence-round-trip fixture).
 #   5. Run scripts/cloud-setup.sh (writes setup-receipt.json + invokes
 #      coo-bootstrap.sh under the mocks).
-#   6. Run scripts/session-start-sync.sh + integrity-check.sh explicitly
+#   6. Unset VADE_COO_MODE, re-source the env block persisted to
+#      $TMP_HOME/.claude/settings.json (mirroring Claude Code's
+#      resume-time injection — the durable carrier on cloud), then
+#      run scripts/session-start-sync.sh + integrity-check.sh explicitly
 #      (in live sessions integrity-check.sh runs inside coo-identity-digest;
 #      CI only runs session-start-sync, so we call it directly here).
+#      The re-source step is the structural fix that displaces a prior
+#      `export VADE_COO_MODE=1` here: it tests the full persistence
+#      round-trip rather than masking failures in
+#      _write_claude_settings_env with a runtime pre-export.
 #   7. Read integrity-check.json, subtract VADE_CI_ALLOWLIST, fail if any
 #      degraded invariants remain.
 #   8. Render a markdown summary (groups + per-invariant table) to
@@ -147,10 +158,22 @@ export OP_SERVICE_ACCOUNT_TOKEN="ops_FAKE_CI_TOKEN_DO_NOT_USE_FOR_REAL_CALLS"
 # /home/user/, runner reads from /tmp/...).
 export VADE_CLOUD_STATE_DIR="$WORKSPACE_ROOT/.vade-cloud-state"
 
+# Anthropic-baseline gitconfig fixture (Phase B of vcm#762 / vrt#267).
+# Anthropic cloud snapshots ship a baseline user.email=noreply@anthropic.com
+# from the harness base image, which the gitconfig-overwrite guard in
+# coo-bootstrap.sh has to explicitly allowlist. vrt#262 introduced the
+# guard without that allowlist; cloud sessions silently skipped the
+# bootstrap (the 2026-05-13 incident); vrt#266 added the allowlist. The
+# CI fixture must mirror the cloud baseline state so a regression in the
+# allowlist surfaces as test failure, not as masked-green CI. Without
+# this line, the CI was running against an empty $TMP_HOME/.gitconfig
+# — a state that does not exist in production cloud.
+git config --file "$TEST_HOME/.gitconfig" user.email noreply@anthropic.com
+
 log "Running scripts/cloud-setup.sh"
 bash "$RUNTIME_DST/scripts/cloud-setup.sh"
 
-# ── 6. Run session-start-sync ────────────────────────────────────
+# ── 6. Re-source persisted settings.json env, then session-start-sync ─
 log "Running scripts/session-start-sync.sh"
 # Tag the integrity-check report with a CI-flavored session id so any
 # operator triaging the artifact can tell it's not a real session.
@@ -160,10 +183,34 @@ export CLAUDE_CODE_SESSION_ID="ci-bootstrap-regression-${GITHUB_RUN_ID:-local}"
 # env, where hook subprocesses (session-start-sync, coo-bootstrap, etc.)
 # inherit them. cloud-setup.sh runs in a separate shell whose runtime
 # export of VADE_COO_MODE=1 does not survive into this stage; the
-# persisted settings.json.env is the durable carrier. Without this the
-# COO-mode-gated writers in lib/common.sh early-exit and D-group
-# invariants (D4) degrade.
-export VADE_COO_MODE=1
+# persisted settings.json.env is the durable carrier.
+#
+# Phase B (vcm#762 / vrt#267) replaces a hard `export VADE_COO_MODE=1`
+# here with the real persistence round-trip: unset the runtime carrier,
+# then re-source whatever cloud-setup actually persisted to
+# settings.json.env. If _write_claude_settings_env was broken (e.g. by
+# a regression in the COO-mode gate, the gitconfig-overwrite guard
+# tripping before persistence, etc.), VADE_COO_MODE will be absent from
+# settings.json.env, the writers in session-start-sync.sh / common.sh
+# will early-exit on `[ "${VADE_COO_MODE:-0}" = "1" ]`, and the D4
+# invariant (and others) will degrade — surfacing the regression as CI
+# failure. This is the structural fix for the "fix-local-broke-cloud"
+# class the pre-export was masking.
+unset VADE_COO_MODE
+SETTINGS_JSON_PATH="$TEST_HOME/.claude/settings.json"
+if [ ! -f "$SETTINGS_JSON_PATH" ]; then
+  log "FATAL: $SETTINGS_JSON_PATH absent after cloud-setup.sh — cannot re-source env."
+  exit 2
+fi
+# Process substitution (source <(...)) — not the |source-/dev/stdin
+# variant which dies on a subshell boundary unless `shopt -s lastpipe`
+# is set with job control off. Both forms encode the same intent:
+# re-export every key in settings.json.env into the current shell so
+# the next-stage subprocess inherits the persisted view, not the
+# pre-cloud-setup view.
+log "Re-sourcing env from $SETTINGS_JSON_PATH (persistence round-trip)"
+source <(jq -r '.env // {} | to_entries[] | "export \(.key)=\(.value | @sh)"' "$SETTINGS_JSON_PATH")
+log "  VADE_COO_MODE after re-source: ${VADE_COO_MODE:-<unset>}"
 bash "$RUNTIME_DST/scripts/session-start-sync.sh"
 
 # Run integrity-check.sh explicitly. In live sessions this is called by
