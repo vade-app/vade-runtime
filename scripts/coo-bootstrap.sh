@@ -64,9 +64,15 @@ mkdir -p "$(dirname "$GC")"
 # someone other than COO. Catches the case where VADE_COO_MODE=1 leaks
 # into a context (manual debugging, future regression in the wrapper)
 # where VADE_COO_GITCONFIG is unset and GC defaults to a personal
-# $HOME/.gitconfig. No-op on cloud (fresh snapshot has empty gitconfig).
+# $HOME/.gitconfig. Anthropic cloud snapshots ship a baseline
+# user.email=noreply@anthropic.com from the harness base image — that
+# is overwrite-safe (harness-default, not a real user identity) and
+# was the regression that broke 2026-05-13 cloud sessions when the
+# original "fresh snapshot has empty gitconfig" assumption failed.
 existing_email="$(git config --file "$GC" --get user.email 2>/dev/null || true)"
-if [ -n "$existing_email" ] && [ "$existing_email" != "coo@vade-app.dev" ]; then
+if [ -n "$existing_email" ] \
+   && [ "$existing_email" != "coo@vade-app.dev" ] \
+   && [ "$existing_email" != "noreply@anthropic.com" ]; then
   log "coo-bootstrap: refusing to overwrite $GC (existing user.email=$existing_email is not COO)"
   bootstrap_log_record SKIP "refused to overwrite non-COO gitconfig $GC"
   trap - EXIT
